@@ -180,10 +180,15 @@ public final class Database {
     public CompletableFuture<List<LedgerEntry>> queryAsync(Query query) {
         CompletableFuture<List<LedgerEntry>> future = new CompletableFuture<>();
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            // A block broken a moment ago may still be queued; flush first so lookups and inspect see
+            // it straight away instead of after the next scheduled flush. A flush failure must not
+            // stop the query - the records already on disk are still worth showing.
             try {
-                // A block broken a moment ago may still be queued; flush first so lookups and
-                // inspect see it straight away instead of after the next scheduled flush.
                 flush();
+            } catch (Throwable t) {
+                plugin.getLogger().log(Level.WARNING, "Could not flush the write queue before a query", t);
+            }
+            try {
                 future.complete(query(query));
             } catch (Throwable t) {
                 future.completeExceptionally(t);

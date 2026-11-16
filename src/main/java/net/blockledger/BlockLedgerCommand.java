@@ -202,7 +202,10 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
                     for (int i = from; i < to; i++) {
                         sender.sendMessage(describe(entries.get(i)));
                     }
-                }));
+                })).exceptionally(error -> {
+                    reportFailure(sender, error);
+                    return null;
+                });
     }
 
     private void change(CommandSender sender, String[] args, boolean rollback, String label) {
@@ -303,7 +306,10 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
                         plugin.getLogger().info(sender.getName() + " ran a " + (isRollback ? "rollback" : "restore")
                                 + " touching " + result.changed() + " blocks.");
                     }).start();
-                }));
+                })).exceptionally(error -> {
+                    reportFailure(sender, error);
+                    return null;
+                });
     }
 
     private void purge(CommandSender sender, String[] args) {
@@ -520,6 +526,14 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
 
     private static String orSomething(String text, String fallback) {
         return text == null || text.isBlank() ? fallback : text;
+    }
+
+    /** Tells the sender a query failed instead of leaving them with silence. */
+    void reportFailure(CommandSender sender, Throwable error) {
+        plugin.getLogger().log(java.util.logging.Level.WARNING, "A ledger query failed", error);
+        String reason = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+        plugin.getServer().getScheduler().runTask(plugin, () ->
+                sender.sendMessage(Text.error("The ledger could not be read: " + reason)));
     }
 
     // ------------------------------------------------------------------ tab completion

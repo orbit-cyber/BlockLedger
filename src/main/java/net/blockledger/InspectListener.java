@@ -83,6 +83,15 @@ public final class InspectListener implements Listener {
                     if (newestFirst.size() >= SHOWN) {
                         player.sendMessage(Text.info("Showing the " + SHOWN + " newest changes."));
                     }
-                }));
+                })).exceptionally(error -> {
+                    plugin.getLogger().log(java.util.logging.Level.WARNING, "An inspect query failed", error);
+                    String reason = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+                    plugin.getServer().getScheduler().runTask(plugin, () -> {
+                        if (player.isOnline()) {
+                            player.sendMessage(Text.error("The ledger could not be read: " + reason));
+                        }
+                    });
+                    return null;
+                });
     }
 }
