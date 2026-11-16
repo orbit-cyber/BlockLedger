@@ -6,7 +6,7 @@ written to a local SQLite database, and `/blockledger rollback` puts things back
 other things players do: drops, pickups, crafting, eating, fishing, item breaks, sign and book edits,
 entity interactions, placed boats and minecarts, commands, kills and deaths.
 
-**Download:** take `BlockLedger-1.1.0.jar` from the
+**Download:** take `BlockLedger-1.2.0.jar` from the
 [latest release](https://github.com/orbit-cyber/BlockLedger/releases/latest) and drop it in your
 server's `plugins/` folder.
 
@@ -23,7 +23,7 @@ server's `plugins/` folder.
 mvn package
 ```
 
-The jar lands in `target/BlockLedger-1.1.0.jar`. Drop it in `plugins/` and restart.
+The jar lands in `target/BlockLedger-1.2.0.jar`. Drop it in `plugins/` and restart.
 
 GitHub Actions builds it too: every push to `main` runs `.github/workflows/build.yml`, uploads the jar
 as a build artifact and attaches it to the
@@ -39,11 +39,13 @@ from the GitHub page without a local JDK.
 | `/blockledger lookup <filters>` | List matching records, 10 per page |
 | `/blockledger count <filters>` | How many records match, without listing them |
 | `/blockledger top [time] [limit]` | The busiest players, e.g. `top 7d 10` |
+| `/blockledger stats [player] [time]` | What one player has been doing, broken down by action |
+| `/blockledger preview <filters>` | What a rollback would touch - changes nothing |
 | `/blockledger tp <x> <y> <z> [world]` | Teleport to a place, usually one from a lookup |
 | `/blockledger export <file> <filters>` | Write matching records to a CSV file in the plugin folder |
 | `/blockledger rollback <filters>` | Put the matching blocks back to how they were before |
 | `/blockledger restore <filters>` | Re-apply the matching changes |
-| `/blockledger revert` | Flip the last rollback or restore back - undo the undo |
+| `/blockledger revert` (or `undo`) | Flip the last rollback or restore back - undo the undo |
 | `/blockledger purge <days>` | Delete records older than that many days |
 | `/blockledger status` | Record count, file size, oldest record, write queue |
 | `/blockledger reload` | Re-read `config.yml` |
@@ -77,6 +79,8 @@ Examples:
 /bl lookup u:Steve t:1h
 /bl count a:break u:Steve t:7d
 /bl top 7d 10
+/bl stats Steve 7d
+/bl preview u:Griefer r:50 t:2h
 /bl tp 128 64 -340
 /bl export steve-breaks.csv u:Steve a:break t:7d
 /bl rollback u:Griefer r:50 t:2h
@@ -84,6 +88,9 @@ Examples:
 /bl rollback a:explosion t:10m r:30
 /bl lookup b:chest w:world
 ```
+
+`preview` takes the same filters as `rollback` and tells you how many records match and how many of
+them actually change a block, without touching anything. Run it first if a rollback feels risky.
 
 `rollback` and `restore` refuse to run without `u:`, `r:`, `a:` or `b:`, so a typo cannot wipe the
 whole map. If you really mean everything, add `global`:
@@ -123,6 +130,9 @@ Every action below is on by default except `natural`, which is the noisy one.
   written out before the database closes.
 - **Rollbacks are gentle.** Blocks are changed `limits.blocks-per-tick` at a time (200 by default)
   instead of all at once, and a rollback's own writes are not recorded again.
+- **Nothing else is dropped.** The "do not record my own writes" switch is on only for the instant of
+  each block write, not for the whole rollback, so players breaking and placing while a big rollback
+  runs are still recorded.
 - **Blocks keep their exact state.** Stairs, slabs, signs and water levels are stored as full block
   data (`minecraft:oak_stairs[facing=east,half=bottom]`), not just the material.
 - **Order is respected.** A rollback applies the newest change first, so the oldest known state is
@@ -152,6 +162,8 @@ See `config.yml` in `plugins/BlockLedger/`. The interesting knobs:
 - `log.commands` - every command typed. Useful for moderation, noisy on a big server.
 - `log.items`, `log.interactions`, `log.deaths` - drops, pickups, crafting, sign edits, entity clicks,
   deaths. All on by default.
+- `log.container-contents` - store the items inside a container, so a rollback refills a broken chest.
+  Off by default because it makes the database grow much faster.
 - `ignore.worlds` / `ignore.blocks` - skip a creative world or a block type entirely.
 - `limits.max-rollback-results` - the hard cap on one rollback (20,000 by default).
 - `limits.max-export-results` - the hard cap on one CSV export (100,000 by default).
@@ -178,8 +190,11 @@ class loader never has to match.
 
 ## Notes and limits
 
-- Block logging is per-block. Chest **contents** are recorded as "X took N of Y from slot Z", not as
-  a full inventory snapshot, so a rollback restores blocks and not items.
+- With `log.container-contents` on, a broken chest or a container click stores its items, and a
+  rollback puts them back into the restored block. With it off, container events are recorded as
+  "X took N of Y from slot Z" and a rollback restores the block but not its contents.
+- Changing `storage.file` and running `/bl reload` moves the ledger to the new file. If the new file
+  cannot be opened, the old one is kept and you are told so.
 - Pistons are recorded as the moved block leaving one position and arriving at another.
 - `natural` logging covers block spread, liquid flow, leaves and entities changing blocks. Fire
   spread and growth of every plant are not all covered.
@@ -201,6 +216,6 @@ src/main/java/net/blockledger/
   ActionType.java          the kinds of change
   Query.java               filter for lookups, counts, exports and rollbacks
   Settings.java            parsed config
-  BlockStates.java         block data to string and back
+  BlockStates.java         block data and container items to a string and back
   Text.java                message formatting
 ```

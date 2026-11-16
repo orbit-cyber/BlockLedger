@@ -23,6 +23,9 @@ log:
   deaths: true
   # Every command a player runs. Can be noisy on a busy server; off if you prefer.
   commands: true
+  # The items inside a chest, barrel, shulker or hopper, so a rollback can put them back.
+  # Costs a lot of database space on a busy server, so it is off by default.
+  container-contents: false
   # Fade, form, spread and leaves decaying. Very noisy, off by default.
   natural-changes: false
 

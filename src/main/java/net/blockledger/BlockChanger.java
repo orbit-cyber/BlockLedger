@@ -3,6 +3,10 @@ package net.blockledger;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockState;
+import org.bukkit.block.Container;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.util.List;
@@ -14,6 +18,10 @@ import java.util.function.Consumer;
  *
  * <p>For a rollback the entries are applied newest first, so the oldest recorded state wins. For a
  * restore they are applied oldest first, so the newest recorded state wins.
+ *
+ * <p>Each write suppresses logging for itself only: on this thread, and only for the length of the
+ * call. Everything else on the server, including a player breaking a block while the rollback is
+ * still running, is recorded as usual.
  */
 public final class BlockChanger implements Runnable {
     private final BlockLedgerPlugin plugin;
@@ -24,6 +32,7 @@ public final class BlockChanger implements Runnable {
     private int index;
     private int changed;
     private int skipped;
+    private int containers;
     private final long startedAt = System.currentTimeMillis();
     private BukkitTask task;
 
@@ -61,15 +70,52 @@ public final class BlockChanger implements Runnable {
             // Comparing the compact block data strings skips blocks that already hold the right state.
             if (BlockStates.serialize(block).equals(desired)) {
                 skipped++;
-                continue;
+            } else {
+                write(block, BlockStates.parse(desired));
+                changed++;
             }
-            block.setBlockData(BlockStates.parse(desired), false);
-            changed++;
+            if (restoreContents(block, entry)) {
+                containers++;
+            }
         }
 
         if (index >= entries.size()) {
             finish();
         }
+    }
+
+    private void write(Block block, BlockData data) {
+        plugin.setOwnWrite(true);
+        try {
+            block.setBlockData(data, false);
+        } finally {
+            plugin.setOwnWrite(false);
+        }
+    }
+
+    /**
+     * Puts a container's items back, when the entry carries them and the block really is a container
+     * now. Returns true when items were written.
+     */
+    private boolean restoreContents(Block block, LedgerEntry entry) {
+        if (entry.contents() == null) {
+            return false;
+        }
+        ItemStack[] items = BlockStates.parseItems(entry.contents());
+        if (items == null || items.length == 0) {
+            return false;
+        }
+        BlockState state = block.getState();
+        if (!(state instanceof Container container)) {
+            return false;
+        }
+        plugin.setOwnWrite(true);
+        try {
+            container.getInventory().setContents(items);
+        } finally {
+            plugin.setOwnWrite(false);
+        }
+        return true;
     }
 
     private void finish() {
@@ -79,10 +125,10 @@ public final class BlockChanger implements Runnable {
         }
         plugin.setChangingBlocks(false);
         if (onFinish != null) {
-            onFinish.accept(new Result(changed, skipped, System.currentTimeMillis() - startedAt));
+            onFinish.accept(new Result(changed, skipped, containers, System.currentTimeMillis() - startedAt));
         }
     }
 
-    public record Result(int changed, int skipped, long millis) {
+    public record Result(int changed, int skipped, int containers, long millis) {
     }
 }

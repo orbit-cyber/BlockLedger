@@ -60,11 +60,13 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
             case "near", "n" -> near(sender, args);
             case "count" -> count(sender, args);
             case "top", "leaderboard" -> top(sender, args);
+            case "stats" -> stats(sender, args);
+            case "preview" -> preview(sender, args);
             case "export" -> export(sender, args);
             case "tp", "teleport" -> teleport(sender, args);
-            case "rollback", "rb", "undo" -> change(sender, args, true, label);
-            case "restore", "rs", "redo" -> change(sender, args, false, label);
-            case "revert" -> undo(sender);
+            case "rollback", "rb" -> change(sender, args, true, label);
+            case "restore", "rs" -> change(sender, args, false, label);
+            case "revert", "undo" -> undo(sender);
             case "purge" -> purge(sender, args);
             case "status" -> status(sender);
             case "reload" -> reload(sender);
@@ -86,12 +88,17 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(Text.plain("/" + label + " lookup <filters> - list recorded changes", NamedTextColor.GRAY));
         sender.sendMessage(Text.plain("/" + label + " count <filters> - how many records match", NamedTextColor.GRAY));
         sender.sendMessage(Text.plain("/" + label + " top [time] [limit] - the busiest players", NamedTextColor.GRAY));
+        sender.sendMessage(Text.plain("/" + label + " stats [player] [time] - what one player did",
+                NamedTextColor.GRAY));
+        sender.sendMessage(Text.plain("/" + label + " preview <filters> - what a rollback would touch",
+                NamedTextColor.GRAY));
         sender.sendMessage(Text.plain("/" + label + " tp <x> <y> <z> [world] - teleport to a place", NamedTextColor.GRAY));
         sender.sendMessage(Text.plain("/" + label + " export <file> <filters> - write matching records to CSV",
                 NamedTextColor.GRAY));
         sender.sendMessage(Text.plain("/" + label + " rollback <filters> - undo the matching changes", NamedTextColor.GRAY));
         sender.sendMessage(Text.plain("/" + label + " restore <filters> - redo the matching changes", NamedTextColor.GRAY));
-        sender.sendMessage(Text.plain("/" + label + " revert - undo the last rollback or restore", NamedTextColor.GRAY));
+        sender.sendMessage(Text.plain("/" + label + " revert (or undo) - flip the last rollback or restore back",
+                NamedTextColor.GRAY));
         sender.sendMessage(Text.plain("/" + label + " purge <days> - delete records older than that", NamedTextColor.GRAY));
         sender.sendMessage(Text.plain("/" + label + " status - database statistics", NamedTextColor.GRAY));
         sender.sendMessage(Text.plain("/" + label + " reload - reload config.yml", NamedTextColor.GRAY));
@@ -213,8 +220,10 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
                             + work.size() + " changes ..."));
                     plugin.setLastChange(work, isRollback, sender.getName());
                     new BlockChanger(plugin, work, isRollback, result -> {
+                        String containers = result.containers() > 0
+                                ? ", " + result.containers() + " containers refilled" : "";
                         sender.sendMessage(Text.success((isRollback ? "Rollback" : "Restore") + " finished: "
-                                + result.changed() + " blocks changed, " + result.skipped()
+                                + result.changed() + " blocks changed" + containers + ", " + result.skipped()
                                 + " already correct or unavailable, in " + result.millis() + " ms."
                                 + " Use /" + label + " revert to flip it back."));
                         plugin.getLogger().info(sender.getName() + " ran a " + (isRollback ? "rollback" : "restore")
@@ -431,11 +440,149 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(Text.info("Reverting the last " + what + " (" + entries.size() + " records) ..."));
         plugin.setLastChange(entries, rollback, sender.getName());
         new BlockChanger(plugin, entries, rollback, result -> {
+            String containers = result.containers() > 0
+                    ? ", " + result.containers() + " containers refilled" : "";
             sender.sendMessage(Text.success("Reverted the last " + what + ": " + result.changed()
-                    + " blocks changed, " + result.skipped() + " already correct or unavailable."));
+                    + " blocks changed" + containers + ", " + result.skipped()
+                    + " already correct or unavailable."));
             plugin.getLogger().info(sender.getName() + " reverted a " + what + " touching "
                     + result.changed() + " blocks.");
         }).start();
+    }
+
+    /** /blockledger preview - what a rollback with these filters would touch, changing nothing. */
+    private void preview(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("blockledger.lookup")) {
+            sender.sendMessage(Text.error("You do not have permission to look up records."));
+            return;
+        }
+        Query query;
+        try {
+            query = parseFilters(args, 1);
+        } catch (IllegalArgumentException e) {
+            sender.sendMessage(Text.error(e.getMessage()));
+            return;
+        }
+        if (query.radius != null && !resolveCenter(sender, query)) {
+            return;
+        }
+        if (!query.hasNarrowFilter() && !query.global) {
+            sender.sendMessage(Text.error("That is the whole database. Add u:, r:, a: or b:, or write "
+                    + "\"global\" if you really mean it."));
+            return;
+        }
+        query.limit = plugin.settings().maxRollbackResults();
+        Query blocks = blockChangesOnly(query);
+
+        sender.sendMessage(Text.info("Checking what a rollback would touch ..."));
+        // With an action filter that cannot change a block there is nothing to count: answer 0 at once.
+        java.util.concurrent.CompletableFuture<Long> blockCount = blocks == null
+                ? java.util.concurrent.CompletableFuture.completedFuture(0L)
+                : plugin.database().countAsync(blocks);
+        plugin.database().countAsync(query).thenCompose(all ->
+                        blockCount.thenApply(blockChanges -> new long[]{all, blockChanges}))
+                .thenAccept(counts -> plugin.getServer().getScheduler().runTask(plugin, () -> {
+                    long matched = counts[0];
+                    long changed = counts[1];
+                    if (matched == 0) {
+                        sender.sendMessage(Text.warn("Nothing matches, so a rollback would do nothing."));
+                        return;
+                    }
+                    sender.sendMessage(Text.info(Text.number(matched) + " records match."));
+                    sender.sendMessage(Text.info(Text.number(changed) + " of them change a block; the rest "
+                            + "are item, container, command and death records."));
+                    long capped = plugin.settings().maxRollbackResults();
+                    if (matched > capped) {
+                        sender.sendMessage(Text.warn("Only the newest " + Text.number(capped)
+                                + " would be applied in one rollback."));
+                    }
+                    sender.sendMessage(Text.info("Nothing was changed. Run /blockledger rollback with the "
+                            + "same filters to apply it."));
+                })).exceptionally(error -> {
+                    reportFailure(sender, error);
+                    return null;
+                });
+    }
+
+    /**
+     * The same filters, narrowed to the actions that actually change a block; null when the player's
+     * own action filter rules all of those out.
+     */
+    private static Query blockChangesOnly(Query source) {
+        Set<ActionType> blockActions = Set.of(ActionType.BREAK, ActionType.PLACE, ActionType.EXPLOSION,
+                ActionType.FIRE, ActionType.PISTON, ActionType.BUCKET, ActionType.NATURAL);
+        Set<ActionType> chosen = blockActions;
+        if (source.actions != null && !source.actions.isEmpty()) {
+            chosen = new java.util.LinkedHashSet<>(source.actions);
+            chosen.retainAll(blockActions);
+            if (chosen.isEmpty()) {
+                return null;
+            }
+        }
+        Query copy = new Query();
+        copy.since = source.since;
+        copy.until = source.until;
+        copy.actor = source.actor;
+        copy.noActor = source.noActor;
+        copy.world = source.world;
+        copy.x = source.x;
+        copy.y = source.y;
+        copy.z = source.z;
+        copy.radius = source.radius;
+        copy.blockContains = source.blockContains;
+        copy.global = source.global;
+        copy.actions = chosen;
+        return copy;
+    }
+
+    /** /blockledger stats - what one player has been doing. */
+    private void stats(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("blockledger.lookup")) {
+            sender.sendMessage(Text.error("You do not have permission to look up records."));
+            return;
+        }
+        String actor = null;
+        if (args.length > 1) {
+            actor = args[1];
+        } else if (sender instanceof Player player) {
+            actor = player.getName();
+        }
+        if (actor == null || actor.isBlank()) {
+            sender.sendMessage(Text.error("Usage: /blockledger stats <player> [time]"));
+            return;
+        }
+        Long since = null;
+        if (args.length > 2) {
+            since = parseTime(args[2]);
+            if (since == null) {
+                sender.sendMessage(Text.error("Time must look like 30s, 15m, 6h or 7d."));
+                return;
+            }
+        }
+        final String who = actor;
+        final Long from = since;
+        final String period = args.length > 2 ? args[2] : "all time";
+
+        sender.sendMessage(Text.info("Counting " + who + "'s activity (" + period + ") ..."));
+        plugin.database().actionCountsAsync(who, from).thenAccept(counts ->
+                plugin.getServer().getScheduler().runTask(plugin, () -> {
+                    if (counts.isEmpty()) {
+                        sender.sendMessage(Text.warn("No records for " + who + " in that period."));
+                        return;
+                    }
+                    long total = 0L;
+                    for (Database.ActionCount count : counts) {
+                        total += count.total();
+                    }
+                    sender.sendMessage(Text.info(who + " - " + Text.number(total) + " records (" + period + "):"));
+                    for (Database.ActionCount count : counts) {
+                        sender.sendMessage(Text.plain("  " + count.action() + ": " + Text.number(count.total()),
+                                NamedTextColor.GRAY));
+                    }
+                })).exceptionally(error -> {
+                    reportFailure(sender, error);
+                    return null;
+                });
     }
 
     private void purge(CommandSender sender, String[] args) {
@@ -485,8 +632,12 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
             sender.sendMessage(Text.error("You do not have permission to reload the config."));
             return;
         }
-        plugin.reload();
-        sender.sendMessage(Text.success("config.yml reloaded."));
+        String problem = plugin.reload();
+        if (problem == null) {
+            sender.sendMessage(Text.success("config.yml reloaded."));
+        } else {
+            sender.sendMessage(Text.error(problem));
+        }
     }
 
     // ------------------------------------------------------------------ helpers
@@ -718,8 +869,8 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
     public List<String> onTabComplete(CommandSender sender, Command command,
                                       String alias, String[] args) {
         if (args.length == 1) {
-            return filter(List.of("inspect", "near", "lookup", "count", "top", "tp", "export",
-                    "rollback", "restore", "revert", "purge", "status", "reload", "help"), args[0]);
+            return filter(List.of("inspect", "near", "lookup", "count", "top", "stats", "preview", "tp",
+                    "export", "rollback", "restore", "revert", "purge", "status", "reload", "help"), args[0]);
         }
         String sub = args[0].toLowerCase(Locale.ROOT);
         if (args.length == 2) {
@@ -732,6 +883,13 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
             if (sub.equals("top")) {
                 return filter(List.of("1h", "6h", "24h", "7d", "30d"), args[1]);
             }
+            if (sub.equals("stats")) {
+                List<String> names = new ArrayList<>();
+                for (Player online : Bukkit.getOnlinePlayers()) {
+                    names.add(online.getName());
+                }
+                return filter(names, args[1]);
+            }
             if (sub.equals("tp") || sub.equals("teleport")) {
                 return Collections.emptyList();
             }
@@ -740,13 +898,13 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
                 return Collections.emptyList();
             }
         }
-        if (args.length == 3 && sub.equals("top")) {
+        if (args.length == 3 && (sub.equals("top") || sub.equals("stats"))) {
             return filter(List.of("5", "10", "20", "50"), args[2]);
         }
         if (args.length >= 2) {
             boolean takesFilters = sub.equals("lookup") || sub.equals("l") || sub.equals("count")
-                    || sub.equals("rollback") || sub.equals("rb") || sub.equals("rs")
-                    || sub.equals("restore") || sub.equals("export");
+                    || sub.equals("preview") || sub.equals("rollback") || sub.equals("rb")
+                    || sub.equals("rs") || sub.equals("restore") || sub.equals("export");
             if (!takesFilters) {
                 return Collections.emptyList();
             }

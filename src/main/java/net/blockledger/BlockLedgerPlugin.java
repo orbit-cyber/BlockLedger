@@ -24,6 +24,16 @@ public final class BlockLedgerPlugin extends JavaPlugin {
     private final Set<UUID> inspecting = ConcurrentHashMap.newKeySet();
     private volatile boolean changingBlocks;
 
+    /**
+     * True only while this plugin is writing a block itself, on the thread doing the writing.
+     *
+     * <p>A thread local rather than a plain flag on purpose: a rollback takes many ticks, and a flag
+     * that stays set for its whole run would silently drop every break and place a player makes
+     * meanwhile. Setting it around the single {@code setBlockData} call suppresses exactly the writes
+     * the rollback causes and nothing else.
+     */
+    private final ThreadLocal<Boolean> ownWrite = ThreadLocal.withInitial(() -> Boolean.FALSE);
+
     /** The last rollback or restore, so /blockledger undo can put it back. */
     private volatile LastChange lastChange;
 
@@ -132,12 +142,38 @@ public final class BlockLedgerPlugin extends JavaPlugin {
         }
     }
 
-    /** Re-reads config.yml. The database stays open, so nothing recorded is lost. */
-    public void reload() {
+    /**
+     * Re-reads config.yml. The database stays open, so nothing recorded is lost.
+     *
+     * <p>If {@code storage.file} now names a different file the ledger is moved over to it; when the
+     * new file cannot be opened the old one is kept, so a typo in the config never loses records.
+     *
+     * @return null when the reload worked, or a sentence saying what did not
+     */
+    public String reload() {
         stopTasks();
         reloadConfig();
-        this.settings = Settings.load(getConfig());
+        Settings fresh = Settings.load(getConfig());
+        if (database != null && !fresh.databaseFile().equals(settings.databaseFile())) {
+            Database next = new Database(this, new File(getDataFolder(), fresh.databaseFile()));
+            if (!next.open()) {
+                getLogger().severe("Could not open " + fresh.databaseFile() + " - keeping "
+                        + settings.databaseFile() + ".");
+                startTasks();
+                return "The new database file could not be opened, so " + settings.databaseFile()
+                        + " is still in use.";
+            }
+            Database previous = database;
+            database = next;
+            settings = fresh;
+            // The old file is closed last, and closing flushes whatever is still queued into it.
+            previous.close();
+            getLogger().info("Switched the ledger to " + fresh.databaseFile() + ".");
+        } else {
+            settings = fresh;
+        }
         startTasks();
+        return null;
     }
 
     public Settings settings() {
@@ -159,6 +195,15 @@ public final class BlockLedgerPlugin extends JavaPlugin {
 
     public void setChangingBlocks(boolean changingBlocks) {
         this.changingBlocks = changingBlocks;
+    }
+
+    /** True while this plugin's own block write is in progress on this thread. */
+    public boolean isOwnWrite() {
+        return Boolean.TRUE.equals(ownWrite.get());
+    }
+
+    public void setOwnWrite(boolean ownWrite) {
+        this.ownWrite.set(ownWrite);
     }
 
     /** Remembers what the last rollback or restore did, for /blockledger undo. */

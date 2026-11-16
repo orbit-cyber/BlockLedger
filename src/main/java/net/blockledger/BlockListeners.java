@@ -7,6 +7,7 @@ import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
+import org.bukkit.block.Container;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
@@ -69,11 +70,20 @@ public final class BlockListeners implements Listener {
     // ------------------------------------------------------------------ helpers
 
     private boolean skip(Block block) {
-        return plugin.isChangingBlocks()
+        return plugin.isOwnWrite()
                 || block == null
                 || block.getWorld() == null
                 || plugin.ignoresWorld(block.getWorld().getName())
                 || plugin.ignoresBlock(block.getType());
+    }
+
+    /** The items in a container block, or null when it is not a container or holds nothing. */
+    private static String contentsOf(Block block) {
+        BlockState state = block.getState();
+        if (!(state instanceof Container container)) {
+            return null;
+        }
+        return BlockStates.serializeItems(container.getInventory().getContents());
     }
 
     private void logBlock(ActionType action, Block block, String actor, String before, String after) {
@@ -138,8 +148,15 @@ public final class BlockListeners implements Listener {
         if (!plugin.settings().logBreak() || skip(event.getBlock()) || bypasses(event.getPlayer())) {
             return;
         }
-        logBlock(ActionType.BREAK, event.getBlock(), describe(event.getPlayer()),
-                BlockStates.serialize(event.getBlock()), air());
+        Block block = event.getBlock();
+        LedgerEntry entry = LedgerEntry.blockChange(ActionType.BREAK, block.getWorld().getName(),
+                block.getX(), block.getY(), block.getZ(), describe(event.getPlayer()),
+                BlockStates.serialize(block), air());
+        // A broken chest keeps its items only if they are read now, before the block is gone.
+        if (plugin.settings().logContainerContents()) {
+            entry = entry.withContents(contentsOf(block));
+        }
+        plugin.record(entry);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -234,8 +251,16 @@ public final class BlockListeners implements Listener {
                 describeItem(item), event.getSlot(),
                 event.getInventory().getType().name().toLowerCase().replace('_', ' '),
                 event.getClick());
-        plugin.record(LedgerEntry.event(ActionType.CONTAINER, location.getWorld().getName(),
-                location.getBlockX(), location.getBlockY(), location.getBlockZ(), player.getName(), extra));
+        LedgerEntry entry = LedgerEntry.event(ActionType.CONTAINER, location.getWorld().getName(),
+                location.getBlockX(), location.getBlockY(), location.getBlockZ(), player.getName(), extra);
+        if (!plugin.settings().logContainerContents()) {
+            plugin.record(entry);
+            return;
+        }
+        // The click is applied after this event, so the new contents are read one tick later.
+        Block container = location.getBlock();
+        plugin.getServer().getScheduler().runTask(plugin, () ->
+                plugin.record(entry.withContents(contentsOf(container))));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)

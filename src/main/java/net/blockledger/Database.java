@@ -62,18 +62,23 @@ public final class Database {
                 statement.execute("PRAGMA busy_timeout=5000");
                 statement.executeUpdate("""
                         CREATE TABLE IF NOT EXISTS entries (
-                            id     INTEGER PRIMARY KEY AUTOINCREMENT,
-                            time   INTEGER NOT NULL,
-                            action TEXT    NOT NULL,
-                            world  TEXT    NOT NULL,
-                            x      INTEGER NOT NULL,
-                            y      INTEGER NOT NULL,
-                            z      INTEGER NOT NULL,
-                            actor  TEXT,
-                            before TEXT,
-                            after  TEXT,
-                            extra  TEXT
+                            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                            time     INTEGER NOT NULL,
+                            action   TEXT    NOT NULL,
+                            world    TEXT    NOT NULL,
+                            x        INTEGER NOT NULL,
+                            y        INTEGER NOT NULL,
+                            z        INTEGER NOT NULL,
+                            actor    TEXT,
+                            before   TEXT,
+                            after    TEXT,
+                            extra    TEXT,
+                            contents TEXT
                         )""");
+                // Databases made before contents logging existed have no such column yet.
+                if (!hasColumn(statement, "entries", "contents")) {
+                    statement.executeUpdate("ALTER TABLE entries ADD COLUMN contents TEXT");
+                }
                 statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_pos ON entries(world, x, z, time)");
                 statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_time ON entries(time)");
                 statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_actor ON entries(actor, time)");
@@ -86,6 +91,18 @@ public final class Database {
         } finally {
             lock.unlock();
         }
+    }
+
+    /** True when the table already has this column, used to migrate an older database in place. */
+    private static boolean hasColumn(Statement statement, String table, String column) throws SQLException {
+        try (ResultSet rows = statement.executeQuery("PRAGMA table_info(" + table + ")")) {
+            while (rows.next()) {
+                if (column.equalsIgnoreCase(rows.getString("name"))) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     public void close() {
@@ -139,8 +156,8 @@ public final class Database {
             }
             connection.setAutoCommit(false);
             try (PreparedStatement statement = connection.prepareStatement(
-                    "INSERT INTO entries(time, action, world, x, y, z, actor, before, after, extra) "
-                            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+                    "INSERT INTO entries(time, action, world, x, y, z, actor, before, after, extra, contents) "
+                            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
                 for (LedgerEntry entry : batch) {
                     statement.setLong(1, entry.time());
                     statement.setString(2, entry.action().id());
@@ -152,6 +169,7 @@ public final class Database {
                     statement.setString(8, entry.before());
                     statement.setString(9, entry.after());
                     statement.setString(10, entry.extra());
+                    statement.setString(11, entry.contents());
                     statement.addBatch();
                 }
                 statement.executeBatch();
@@ -200,7 +218,8 @@ public final class Database {
     private List<LedgerEntry> query(Query query) {
         List<LedgerEntry> results = new ArrayList<>();
         StringBuilder sql = new StringBuilder(
-                "SELECT time, action, world, x, y, z, actor, before, after, extra FROM entries WHERE 1=1");
+                "SELECT time, action, world, x, y, z, actor, before, after, extra, contents "
+                        + "FROM entries WHERE 1=1");
         List<Object> parameters = new ArrayList<>();
         appendFilters(sql, parameters, query);
         // The order matters to rollback and restore: the last entry applied for a position wins, so the
@@ -233,7 +252,8 @@ public final class Database {
                                 rows.getString(7),
                                 rows.getString(8),
                                 rows.getString(9),
-                                rows.getString(10)));
+                                rows.getString(10),
+                                rows.getString(11)));
                     }
                 }
             }
@@ -387,6 +407,49 @@ public final class Database {
         return future;
     }
 
+    /** One player's records per action, most first, for /blockledger stats. */
+    public CompletableFuture<List<ActionCount>> actionCountsAsync(String actor, Long since) {
+        CompletableFuture<List<ActionCount>> future = new CompletableFuture<>();
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            try {
+                flush();
+            } catch (Throwable t) {
+                plugin.getLogger().log(Level.WARNING, "Could not flush before a summary", t);
+            }
+            List<ActionCount> counts = new ArrayList<>();
+            StringBuilder sql = new StringBuilder(
+                    "SELECT action, COUNT(*) AS total FROM entries WHERE actor = ?");
+            List<Object> parameters = new ArrayList<>();
+            parameters.add(actor);
+            if (since != null) {
+                sql.append(" AND time >= ?");
+                parameters.add(since);
+            }
+            sql.append(" GROUP BY action ORDER BY total DESC");
+
+            lock.lock();
+            try {
+                if (connection != null) {
+                    try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
+                        bind(statement, parameters);
+                        try (ResultSet rows = statement.executeQuery()) {
+                            while (rows.next()) {
+                                counts.add(new ActionCount(rows.getString(1), rows.getLong(2)));
+                            }
+                        }
+                    }
+                }
+            } catch (SQLException e) {
+                future.completeExceptionally(e);
+                return;
+            } finally {
+                lock.unlock();
+            }
+            future.complete(counts);
+        });
+        return future;
+    }
+
     /** Writes the matching records to a CSV file. Returns how many rows were written. */
     public CompletableFuture<Integer> exportCsvAsync(Query query, File target) {
         CompletableFuture<Integer> future = new CompletableFuture<>();
@@ -397,7 +460,8 @@ public final class Database {
                 plugin.getLogger().log(Level.WARNING, "Could not flush before an export", t);
             }
             StringBuilder sql = new StringBuilder(
-                    "SELECT time, action, world, x, y, z, actor, before, after, extra FROM entries WHERE 1=1");
+                    "SELECT time, action, world, x, y, z, actor, before, after, extra, contents "
+                            + "FROM entries WHERE 1=1");
             List<Object> parameters = new ArrayList<>();
             appendFilters(sql, parameters, query);
             sql.append(" ORDER BY time ASC, id ASC LIMIT ?");
@@ -407,7 +471,7 @@ public final class Database {
             lock.lock();
             try (java.io.BufferedWriter writer = java.nio.file.Files.newBufferedWriter(
                     target.toPath(), java.nio.charset.StandardCharsets.UTF_8)) {
-                writer.write("time,action,world,x,y,z,actor,before,after,extra");
+                writer.write("time,action,world,x,y,z,actor,before,after,extra,contents");
                 writer.newLine();
                 if (connection != null) {
                     try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
@@ -424,7 +488,8 @@ public final class Database {
                                         rows.getString(7),
                                         rows.getString(8),
                                         rows.getString(9),
-                                        rows.getString(10)));
+                                        rows.getString(10),
+                                        rows.getString(11)));
                                 writer.newLine();
                                 written++;
                             }
@@ -510,5 +575,9 @@ public final class Database {
 
     /** One line of /blockledger top. */
     public record ActorCount(String actor, long total) {
+    }
+
+    /** One line of /blockledger stats. */
+    public record ActionCount(String action, long total) {
     }
 }

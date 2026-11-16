@@ -231,10 +231,7 @@ public final class LedgerApi {
 
     /** Re-reads config.yml. The database stays open, so nothing recorded is lost. */
     public String reload() {
-        return onMain(() -> {
-            plugin.reload();
-            return null;
-        }, "The server did not answer.");
+        return onMain(() -> plugin.reload(), "The server did not answer.");
     }
 
     // ------------------------------------------------------------------ settings
@@ -263,6 +260,7 @@ public final class LedgerApi {
         out.put("log.interactions", settings.logInteractions());
         out.put("log.deaths", settings.logDeaths());
         out.put("log.commands", settings.logCommands());
+        out.put("log.container-contents", settings.logContainerContents());
         out.put("log.natural-changes", settings.logNatural());
         out.put("purge.enabled", settings.purgeEnabled());
         out.put("purge.days", settings.purgeDays());
@@ -289,6 +287,7 @@ public final class LedgerApi {
         Set<String> allowed = Set.of("log.block-break", "log.block-place", "log.explosions", "log.fire",
                 "log.pistons", "log.buckets", "log.containers", "log.entities", "log.items",
                 "log.interactions", "log.deaths", "log.commands", "log.natural-changes",
+                "log.container-contents",
                 "purge.enabled", "purge.days", "limits.max-lookup-results", "limits.max-rollback-results",
                 "limits.blocks-per-tick", "storage.flush-interval-ticks");
         Set<String> lists = Set.of("ignore.worlds", "ignore.blocks");

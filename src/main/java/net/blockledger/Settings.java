@@ -26,6 +26,7 @@ public final class Settings {
     private final boolean logInteractions;
     private final boolean logDeaths;
     private final boolean logCommands;
+    private final boolean logContainerContents;
     private final Set<String> ignoredWorlds;
     private final Set<String> ignoredBlocks;
     private final boolean purgeEnabled;
@@ -51,6 +52,7 @@ public final class Settings {
         this.logInteractions = config.getBoolean("log.interactions", true);
         this.logDeaths = config.getBoolean("log.deaths", true);
         this.logCommands = config.getBoolean("log.commands", true);
+        this.logContainerContents = config.getBoolean("log.container-contents", false);
 
         Set<String> worlds = new HashSet<>();
         List<String> worldList = config.getStringList("ignore.worlds");
@@ -140,6 +142,11 @@ public final class Settings {
 
     public boolean logCommands() {
         return logCommands;
+    }
+
+    /** True when the items inside a container are stored with it, so a rollback can put them back. */
+    public boolean logContainerContents() {
+        return logContainerContents;
     }
 
     public boolean isIgnoredWorld(String worldName) {
