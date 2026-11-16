@@ -86,7 +86,8 @@ public final class LedgerApi {
      * The records matching a filter, newest first.
      *
      * @param filters {@code actor}, {@code since} (30s, 15m, 6h, 7d), {@code action} (comma
-     *                separated ids), {@code block}, {@code world}, {@code limit}, {@code page}
+     *                separated ids), {@code block}, {@code world}, {@code x}, {@code y}, {@code z},
+     *                {@code radius}, {@code limit}, {@code page}
      * @return one map per record: {@code time}, {@code action}, {@code actor}, {@code world},
      *         {@code x}, {@code y}, {@code z}, {@code before}, {@code after}, {@code extra}
      */
@@ -386,11 +387,40 @@ public final class LedgerApi {
         if (world != null && !String.valueOf(world).isBlank()) {
             query.world = String.valueOf(world).trim();
         }
+        // A position, which is what the chest log is: one container and everyone who opened it.
+        // All three are needed to mean anything, so a half-typed position narrows nothing.
+        Integer x = whole(filters.get("x"));
+        Integer y = whole(filters.get("y"));
+        Integer z = whole(filters.get("z"));
+        if (x != null && y != null && z != null) {
+            query.x = x;
+            query.y = y;
+            query.z = z;
+            Integer radius = whole(filters.get("radius"));
+            if (radius != null && radius >= 0) {
+                query.radius = radius;
+            }
+        }
         query.limit = positive(filters.get("limit"), query.limit);
         query.page = positive(filters.get("page"), query.page);
         query.global = Boolean.TRUE.equals(filters.get("global"))
                 || "true".equalsIgnoreCase(String.valueOf(filters.get("global")));
         return query;
+    }
+
+    /** A whole number from a filter, or null when it is missing or not one. */
+    private static Integer whole(Object value) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(String.valueOf(value).trim());
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     private static int positive(Object value, int fallback) {
@@ -451,6 +481,9 @@ public final class LedgerApi {
         row.put("before", entry.before());
         row.put("after", entry.after());
         row.put("extra", entry.extra());
+        // Whether the chest's items were kept with this record, so a panel can say honestly
+        // whether a rollback would refill it or only restore the block.
+        row.put("hasContents", entry.contents() != null);
         return row;
     }
 

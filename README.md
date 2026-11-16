@@ -211,6 +211,15 @@ api.settings();                             // every log.* toggle and limit
 api.saveSettings(Map.of("log.commands", false));
 ```
 
+A position works too, which is how a panel can show one chest's history - the same thing
+`/bl chest` prints:
+
+```java
+api.lookup(Map.of("action", "container", "world", "world", "x", 120, "y", 65, "z", -338));
+// each record carries "extra" ("took 32 x diamond, put 5 x iron ingot") and
+// "hasContents", which says whether a rollback would refill the chest or only restore the block
+```
+
 Results are maps and lists of strings and numbers, never this plugin's own classes, so the caller's
 class loader never has to match.
 
