@@ -6,6 +6,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.io.File;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -22,6 +23,9 @@ public final class BlockLedgerPlugin extends JavaPlugin {
 
     private final Set<UUID> inspecting = ConcurrentHashMap.newKeySet();
     private volatile boolean changingBlocks;
+
+    /** The last rollback or restore, so /blockledger undo can put it back. */
+    private volatile LastChange lastChange;
 
     @Override
     public void onEnable() {
@@ -62,12 +66,19 @@ public final class BlockLedgerPlugin extends JavaPlugin {
 
         startTasks();
 
+        // Published last, once the database is open and the commands are wired: another plugin
+        // asking for it a moment after startup must not get a half-built ledger.
+        LedgerApi.install(new LedgerApi(this));
+
         getLogger().info("BlockLedger " + getPluginMeta().getVersion() + " enabled. Recording to "
                 + settings.databaseFile() + " (flush every " + settings.flushIntervalTicks() + " ticks).");
     }
 
     @Override
     public void onDisable() {
+        // Cleared first, so a panel call during shutdown gets "not installed" instead of reaching
+        // into a database that is about to close.
+        LedgerApi.uninstall();
         stopTasks();
         if (database != null) {
             database.close();
@@ -148,6 +159,23 @@ public final class BlockLedgerPlugin extends JavaPlugin {
 
     public void setChangingBlocks(boolean changingBlocks) {
         this.changingBlocks = changingBlocks;
+    }
+
+    /** Remembers what the last rollback or restore did, for /blockledger undo. */
+    public void setLastChange(List<LedgerEntry> entries, boolean rollback, String actor) {
+        this.lastChange = new LastChange(List.copyOf(entries), rollback, actor, System.currentTimeMillis());
+    }
+
+    public LastChange lastChange() {
+        return lastChange;
+    }
+
+    public void clearLastChange() {
+        this.lastChange = null;
+    }
+
+    /** What the last rollback or restore touched. */
+    public record LastChange(List<LedgerEntry> entries, boolean rollback, String actor, long time) {
     }
 
     /** True when this world must not be recorded. */

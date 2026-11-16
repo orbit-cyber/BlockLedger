@@ -202,7 +202,51 @@ public final class Database {
         StringBuilder sql = new StringBuilder(
                 "SELECT time, action, world, x, y, z, actor, before, after, extra FROM entries WHERE 1=1");
         List<Object> parameters = new ArrayList<>();
+        appendFilters(sql, parameters, query);
+        // The order matters to rollback and restore: the last entry applied for a position wins, so the
+        // caller asks for the direction it needs.
+        sql.append(" ORDER BY time ").append(query.ascending ? "ASC" : "DESC");
+        sql.append(", id ").append(query.ascending ? "ASC" : "DESC");
+        sql.append(" LIMIT ?");
+        parameters.add(Math.max(1, query.limit));
 
+        lock.lock();
+        try {
+            if (connection == null) {
+                return results;
+            }
+            try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
+                bind(statement, parameters);
+                try (ResultSet rows = statement.executeQuery()) {
+                    while (rows.next()) {
+                        ActionType action = ActionType.fromId(rows.getString(2));
+                        if (action == null) {
+                            continue;
+                        }
+                        results.add(new LedgerEntry(
+                                rows.getLong(1),
+                                action,
+                                rows.getString(3),
+                                rows.getInt(4),
+                                rows.getInt(5),
+                                rows.getInt(6),
+                                rows.getString(7),
+                                rows.getString(8),
+                                rows.getString(9),
+                                rows.getString(10)));
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            plugin.getLogger().log(Level.SEVERE, "Could not run a database query", e);
+        } finally {
+            lock.unlock();
+        }
+        return results;
+    }
+
+    /** The shared WHERE clause for every query, so count, export and lookups always agree. */
+    private void appendFilters(StringBuilder sql, List<Object> parameters, Query query) {
         if (query.since != null) {
             sql.append(" AND time >= ?");
             parameters.add(query.since);
@@ -263,48 +307,151 @@ public final class Database {
             parameters.add(like);
             parameters.add(like);
         }
-        // The order matters to rollback and restore: the last entry applied for a position wins, so the
-        // caller asks for the direction it needs.
-        sql.append(" ORDER BY time ").append(query.ascending ? "ASC" : "DESC");
-        sql.append(", id ").append(query.ascending ? "ASC" : "DESC");
-        sql.append(" LIMIT ?");
-        parameters.add(Math.max(1, query.limit));
+    }
 
-        lock.lock();
-        try {
-            if (connection == null) {
-                return results;
+    private static void bind(PreparedStatement statement, List<Object> parameters) throws SQLException {
+        for (int i = 0; i < parameters.size(); i++) {
+            statement.setObject(i + 1, parameters.get(i));
+        }
+    }
+
+    /** How many records match, without loading them. Runs on an async thread. */
+    public CompletableFuture<Long> countAsync(Query query) {
+        CompletableFuture<Long> future = new CompletableFuture<>();
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            try {
+                flush();
+            } catch (Throwable t) {
+                plugin.getLogger().log(Level.WARNING, "Could not flush before a count", t);
             }
-            try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
-                for (int i = 0; i < parameters.size(); i++) {
-                    statement.setObject(i + 1, parameters.get(i));
-                }
-                try (ResultSet rows = statement.executeQuery()) {
-                    while (rows.next()) {
-                        ActionType action = ActionType.fromId(rows.getString(2));
-                        if (action == null) {
-                            continue;
+            long total = 0L;
+            StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM entries WHERE 1=1");
+            List<Object> parameters = new ArrayList<>();
+            appendFilters(sql, parameters, query);
+            lock.lock();
+            try {
+                if (connection != null) {
+                    try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
+                        bind(statement, parameters);
+                        try (ResultSet row = statement.executeQuery()) {
+                            if (row.next()) {
+                                total = row.getLong(1);
+                            }
                         }
-                        results.add(new LedgerEntry(
-                                rows.getLong(1),
-                                action,
-                                rows.getString(3),
-                                rows.getInt(4),
-                                rows.getInt(5),
-                                rows.getInt(6),
-                                rows.getString(7),
-                                rows.getString(8),
-                                rows.getString(9),
-                                rows.getString(10)));
                     }
                 }
+            } catch (SQLException e) {
+                future.completeExceptionally(e);
+                return;
+            } finally {
+                lock.unlock();
             }
-        } catch (SQLException e) {
-            plugin.getLogger().log(Level.SEVERE, "Could not run a database query", e);
-        } finally {
-            lock.unlock();
+            future.complete(total);
+        });
+        return future;
+    }
+
+    /** The busiest actors since a timestamp, most records first. */
+    public CompletableFuture<List<ActorCount>> topActorsAsync(long since, int limit) {
+        CompletableFuture<List<ActorCount>> future = new CompletableFuture<>();
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            try {
+                flush();
+            } catch (Throwable t) {
+                plugin.getLogger().log(Level.WARNING, "Could not flush before a summary", t);
+            }
+            List<ActorCount> actors = new ArrayList<>();
+            lock.lock();
+            try {
+                if (connection != null) {
+                    try (PreparedStatement statement = connection.prepareStatement(
+                            "SELECT actor, COUNT(*) AS total FROM entries WHERE actor IS NOT NULL AND time >= ? "
+                                    + "GROUP BY actor ORDER BY total DESC LIMIT ?")) {
+                        statement.setLong(1, since);
+                        statement.setInt(2, Math.max(1, limit));
+                        try (ResultSet rows = statement.executeQuery()) {
+                            while (rows.next()) {
+                                actors.add(new ActorCount(rows.getString(1), rows.getLong(2)));
+                            }
+                        }
+                    }
+                }
+            } catch (SQLException e) {
+                future.completeExceptionally(e);
+                return;
+            } finally {
+                lock.unlock();
+            }
+            future.complete(actors);
+        });
+        return future;
+    }
+
+    /** Writes the matching records to a CSV file. Returns how many rows were written. */
+    public CompletableFuture<Integer> exportCsvAsync(Query query, File target) {
+        CompletableFuture<Integer> future = new CompletableFuture<>();
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            try {
+                flush();
+            } catch (Throwable t) {
+                plugin.getLogger().log(Level.WARNING, "Could not flush before an export", t);
+            }
+            StringBuilder sql = new StringBuilder(
+                    "SELECT time, action, world, x, y, z, actor, before, after, extra FROM entries WHERE 1=1");
+            List<Object> parameters = new ArrayList<>();
+            appendFilters(sql, parameters, query);
+            sql.append(" ORDER BY time ASC, id ASC LIMIT ?");
+            parameters.add(Math.max(1, query.limit));
+
+            int written = 0;
+            lock.lock();
+            try (java.io.BufferedWriter writer = java.nio.file.Files.newBufferedWriter(
+                    target.toPath(), java.nio.charset.StandardCharsets.UTF_8)) {
+                writer.write("time,action,world,x,y,z,actor,before,after,extra");
+                writer.newLine();
+                if (connection != null) {
+                    try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
+                        bind(statement, parameters);
+                        try (ResultSet rows = statement.executeQuery()) {
+                            while (rows.next()) {
+                                writer.write(csvLine(
+                                        java.time.Instant.ofEpochMilli(rows.getLong(1)).toString(),
+                                        rows.getString(2),
+                                        rows.getString(3),
+                                        String.valueOf(rows.getInt(4)),
+                                        String.valueOf(rows.getInt(5)),
+                                        String.valueOf(rows.getInt(6)),
+                                        rows.getString(7),
+                                        rows.getString(8),
+                                        rows.getString(9),
+                                        rows.getString(10)));
+                                writer.newLine();
+                                written++;
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                future.completeExceptionally(e);
+                return;
+            } finally {
+                lock.unlock();
+            }
+            future.complete(written);
+        });
+        return future;
+    }
+
+    /** One CSV line, with every field quoted and inner quotes doubled. */
+    private static String csvLine(String... fields) {
+        StringBuilder line = new StringBuilder();
+        for (String field : fields) {
+            if (line.length() > 0) {
+                line.append(',');
+            }
+            line.append('"').append(field == null ? "" : field.replace("\"", "\"\"")).append('"');
         }
-        return results;
+        return line.toString();
     }
 
     /** Deletes records older than the given age. Returns how many rows went away. */
@@ -359,5 +506,9 @@ public final class Database {
     }
 
     public record Stats(long rows, long oldestTime, long sizeBytes) {
+    }
+
+    /** One line of /blockledger top. */
+    public record ActorCount(String actor, long total) {
     }
 }

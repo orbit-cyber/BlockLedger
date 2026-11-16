@@ -1,5 +1,5 @@
 name: BlockLedger
-version: 1.0.0
+version: 1.1.0
 main: net.blockledger.BlockLedgerPlugin
 description: Block logging with inspect, rollback and restore - a lightweight CoreProtect alternative.
 author: BlockLedger
@@ -51,6 +51,12 @@ permissions:
     default: op
   blockledger.reload:
     description: Reload config.yml
+    default: op
+  blockledger.tp:
+    description: Teleport to coordinates with /blockledger tp
+    default: op
+  blockledger.export:
+    description: Export records to a CSV file
     default: op
   blockledger.bypass:
     description: Changes made by players with this permission are not logged

@@ -32,6 +32,7 @@ public final class Settings {
     private final int purgeDays;
     private final int maxLookupResults;
     private final int maxRollbackResults;
+    private final int maxExportResults;
     private final int blocksPerTick;
 
     private Settings(FileConfiguration config) {
@@ -73,6 +74,7 @@ public final class Settings {
         this.purgeDays = Math.max(1, config.getInt("purge.days", 30));
         this.maxLookupResults = Math.max(1, config.getInt("limits.max-lookup-results", 100));
         this.maxRollbackResults = Math.max(1, config.getInt("limits.max-rollback-results", 20000));
+        this.maxExportResults = Math.max(1, config.getInt("limits.max-export-results", 100000));
         this.blocksPerTick = Math.max(1, config.getInt("limits.blocks-per-tick", 200));
     }
 
@@ -162,6 +164,10 @@ public final class Settings {
 
     public int maxRollbackResults() {
         return maxRollbackResults;
+    }
+
+    public int maxExportResults() {
+        return maxExportResults;
     }
 
     public int blocksPerTick() {

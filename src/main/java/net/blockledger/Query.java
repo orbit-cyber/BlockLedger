@@ -20,6 +20,10 @@ public final class Query {
     public String blockContains;
     public int limit = 100;
     public boolean ascending = true;
+    /** Page for /blockledger lookup. */
+    public int page = 1;
+    /** Set when the player wrote "global", allowing a rollback without a narrow filter. */
+    public boolean global;
 
     /** True when at least one narrow filter is set, so a rollback can never hit the whole database. */
     public boolean hasNarrowFilter() {

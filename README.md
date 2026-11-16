@@ -6,7 +6,7 @@ written to a local SQLite database, and `/blockledger rollback` puts things back
 other things players do: drops, pickups, crafting, eating, fishing, item breaks, sign and book edits,
 entity interactions, placed boats and minecarts, commands, kills and deaths.
 
-**Download:** take `BlockLedger-1.0.0.jar` from the
+**Download:** take `BlockLedger-1.1.0.jar` from the
 [latest release](https://github.com/orbit-cyber/BlockLedger/releases/latest) and drop it in your
 server's `plugins/` folder.
 
@@ -23,21 +23,27 @@ server's `plugins/` folder.
 mvn package
 ```
 
-The jar lands in `target/BlockLedger-1.0.0.jar`. Drop it in `plugins/` and restart.
+The jar lands in `target/BlockLedger-1.1.0.jar`. Drop it in `plugins/` and restart.
 
 GitHub Actions builds it too: every push to `main` runs `.github/workflows/build.yml`, uploads the jar
 as a build artifact and attaches it to the
-[v1.0.0 release](https://github.com/orbit-cyber/BlockLedger/releases/latest), so you can download a
-ready jar from the GitHub page without a local JDK.
+[release](https://github.com/orbit-cyber/BlockLedger/releases/latest), so you can download a ready jar
+from the GitHub page without a local JDK.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
 | `/blockledger inspect` (alias `/bl i`, or `/inspect`) | Toggle inspect mode: left or right click a block to see who changed it and when |
+| `/blockledger near [radius] [time]` | Recent activity around you - `near 30 2h` is 30 blocks and two hours |
 | `/blockledger lookup <filters>` | List matching records, 10 per page |
+| `/blockledger count <filters>` | How many records match, without listing them |
+| `/blockledger top [time] [limit]` | The busiest players, e.g. `top 7d 10` |
+| `/blockledger tp <x> <y> <z> [world]` | Teleport to a place, usually one from a lookup |
+| `/blockledger export <file> <filters>` | Write matching records to a CSV file in the plugin folder |
 | `/blockledger rollback <filters>` | Put the matching blocks back to how they were before |
 | `/blockledger restore <filters>` | Re-apply the matching changes |
+| `/blockledger revert` | Flip the last rollback or restore back - undo the undo |
 | `/blockledger purge <days>` | Delete records older than that many days |
 | `/blockledger status` | Record count, file size, oldest record, write queue |
 | `/blockledger reload` | Re-read `config.yml` |
@@ -66,7 +72,13 @@ filters, same permissions:
 Examples:
 
 ```
+/bl near
+/bl near 50 2h
 /bl lookup u:Steve t:1h
+/bl count a:break u:Steve t:7d
+/bl top 7d 10
+/bl tp 128 64 -340
+/bl export steve-breaks.csv u:Steve a:break t:7d
 /bl rollback u:Griefer r:50 t:2h
 /bl restore u:Steve b:diamond
 /bl rollback a:explosion t:10m r:30
@@ -128,6 +140,8 @@ Every action below is on by default except `natural`, which is the noisy one.
 | `blockledger.purge` | op | Delete old records |
 | `blockledger.status` | op | Database statistics |
 | `blockledger.reload` | op | Reload the config |
+| `blockledger.tp` | op | Teleport with `/bl tp` |
+| `blockledger.export` | op | Write records to CSV |
 | `blockledger.bypass` | false | This player's changes are not recorded |
 
 ## Configuration
@@ -140,6 +154,27 @@ See `config.yml` in `plugins/BlockLedger/`. The interesting knobs:
   deaths. All on by default.
 - `ignore.worlds` / `ignore.blocks` - skip a creative world or a block type entirely.
 - `limits.max-rollback-results` - the hard cap on one rollback (20,000 by default).
+- `limits.max-export-results` - the hard cap on one CSV export (100,000 by default).
+
+## For other plugins
+
+`LedgerApi` is a small, plain-types API another plugin can use instead of typing commands - a web
+staff panel, for instance:
+
+```java
+LedgerApi api = LedgerApi.get();           // null when BlockLedger is not running
+api.status();                               // rows, sizeBytes, oldestTime, pending, busy
+api.lookup(Map.of("actor", "Steve", "since", "1h", "limit", 50));
+api.count(Map.of("action", "break", "since", "7d"));
+api.top("7d", 10);
+api.rollback(Map.of("actor", "Griefer", "since", "2h"));   // null on success, else a reason
+api.revert();
+api.settings();                             // every log.* toggle and limit
+api.saveSettings(Map.of("log.commands", false));
+```
+
+Results are maps and lists of strings and numbers, never this plugin's own classes, so the caller's
+class loader never has to match.
 
 ## Notes and limits
 
@@ -157,12 +192,14 @@ src/main/java/net/blockledger/
   BlockLedgerPlugin.java   plugin entry point, config, tasks
   BlockListeners.java      Bukkit events to ledger entries
   InspectListener.java     click-to-inspect
-  BlockLedgerCommand.java  /blockledger, filters, output
+  BlockLedgerCommand.java  /blockledger, filters, output, export
+  AliasCommand.java        the /inspect, /restore and /rollback shortcuts
   BlockChanger.java        applies a rollback a few blocks per tick
-  Database.java            SQLite storage, async flush and queries
+  Database.java            SQLite storage, async flush, queries, CSV export
+  LedgerApi.java           plain-types API for other plugins
   LedgerEntry.java         one recorded change
   ActionType.java          the kinds of change
-  Query.java               filter for lookups and rollbacks
+  Query.java               filter for lookups, counts, exports and rollbacks
   Settings.java            parsed config
   BlockStates.java         block data to string and back
   Text.java                message formatting

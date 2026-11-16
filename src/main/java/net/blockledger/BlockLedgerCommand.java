@@ -57,8 +57,14 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
             case "help" -> help(sender, label);
             case "inspect", "i" -> inspect(sender);
             case "lookup", "l" -> lookup(sender, args, label);
+            case "near", "n" -> near(sender, args);
+            case "count" -> count(sender, args);
+            case "top", "leaderboard" -> top(sender, args);
+            case "export" -> export(sender, args);
+            case "tp", "teleport" -> teleport(sender, args);
             case "rollback", "rb", "undo" -> change(sender, args, true, label);
             case "restore", "rs", "redo" -> change(sender, args, false, label);
+            case "revert" -> undo(sender);
             case "purge" -> purge(sender, args);
             case "status" -> status(sender);
             case "reload" -> reload(sender);
@@ -75,9 +81,17 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
     private void help(CommandSender sender, String label) {
         sender.sendMessage(Component.text("BlockLedger", NamedTextColor.AQUA));
         sender.sendMessage(Text.plain("/" + label + " inspect - toggle click-to-inspect", NamedTextColor.GRAY));
+        sender.sendMessage(Text.plain("/" + label + " near [radius] [time] - recent activity around you",
+                NamedTextColor.GRAY));
         sender.sendMessage(Text.plain("/" + label + " lookup <filters> - list recorded changes", NamedTextColor.GRAY));
+        sender.sendMessage(Text.plain("/" + label + " count <filters> - how many records match", NamedTextColor.GRAY));
+        sender.sendMessage(Text.plain("/" + label + " top [time] [limit] - the busiest players", NamedTextColor.GRAY));
+        sender.sendMessage(Text.plain("/" + label + " tp <x> <y> <z> [world] - teleport to a place", NamedTextColor.GRAY));
+        sender.sendMessage(Text.plain("/" + label + " export <file> <filters> - write matching records to CSV",
+                NamedTextColor.GRAY));
         sender.sendMessage(Text.plain("/" + label + " rollback <filters> - undo the matching changes", NamedTextColor.GRAY));
         sender.sendMessage(Text.plain("/" + label + " restore <filters> - redo the matching changes", NamedTextColor.GRAY));
+        sender.sendMessage(Text.plain("/" + label + " revert - undo the last rollback or restore", NamedTextColor.GRAY));
         sender.sendMessage(Text.plain("/" + label + " purge <days> - delete records older than that", NamedTextColor.GRAY));
         sender.sendMessage(Text.plain("/" + label + " status - database statistics", NamedTextColor.GRAY));
         sender.sendMessage(Text.plain("/" + label + " reload - reload config.yml", NamedTextColor.GRAY));
@@ -113,76 +127,21 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
             sender.sendMessage(Text.error("You do not have permission to look up records."));
             return;
         }
-        Query query = new Query();
-        int page = 1;
-        for (int i = 1; i < args.length; i++) {
-            String token = args[i];
-            String key = key(token);
-            String value = value(token);
-            if (key == null) {
-                if (token.equalsIgnoreCase("global")) {
-                    continue;
-                }
-                sender.sendMessage(Text.error("Unknown filter \"" + token + "\"."));
-                return;
-            }
-            switch (key) {
-                case "u" -> query.actor = value;
-                case "t" -> {
-                    Long since = parseTime(value);
-                    if (since == null) {
-                        sender.sendMessage(Text.error("Time must look like 30s, 15m, 6h or 7d."));
-                        return;
-                    }
-                    query.since = since;
-                }
-                case "r" -> {
-                    Integer radius = parseInt(value);
-                    if (radius == null) {
-                        sender.sendMessage(Text.error("Radius must be a number."));
-                        return;
-                    }
-                    query.radius = radius;
-                }
-                case "a" -> {
-                    Set<ActionType> actions = ActionType.parseList(value);
-                    if (actions.isEmpty()) {
-                        sender.sendMessage(Text.error("Unknown action. Use one of: " + ActionType.ids()));
-                        return;
-                    }
-                    query.actions = actions;
-                }
-                case "b" -> query.blockContains = value.toLowerCase(Locale.ROOT).replace(' ', '_');
-                case "p" -> {
-                    Integer parsed = parseInt(value);
-                    if (parsed == null || parsed < 1) {
-                        sender.sendMessage(Text.error("Page must be a number of 1 or more."));
-                        return;
-                    }
-                    page = parsed;
-                }
-                case "x", "y", "z", "w" -> {
-                    if (!applyPosition(sender, query, key, value)) {
-                        return;
-                    }
-                }
-                default -> {
-                    sender.sendMessage(Text.error("Unknown filter \"" + token + "\"."));
-                    return;
-                }
-            }
+        Query query;
+        try {
+            query = parseFilters(args, 1);
+        } catch (IllegalArgumentException e) {
+            sender.sendMessage(Text.error(e.getMessage()));
+            return;
         }
-
-        if (query.radius != null) {
-            if (!resolveCenter(sender, query)) {
-                return;
-            }
+        if (query.radius != null && !resolveCenter(sender, query)) {
+            return;
         }
 
         int limit = plugin.settings().maxLookupResults();
         query.limit = limit;
         query.ascending = false;
-        final int requestedPage = page;
+        final int requestedPage = query.page;
 
         sender.sendMessage(Text.info("Searching the ledger ..."));
         plugin.database().queryAsync(query).thenAccept(entries ->
@@ -218,66 +177,19 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
             sender.sendMessage(Text.error("A rollback or restore is already running. Wait for it to finish."));
             return;
         }
-        Query query = new Query();
-        boolean global = false;
-        for (int i = 1; i < args.length; i++) {
-            String token = args[i];
-            if (token.equalsIgnoreCase("global")) {
-                global = true;
-                continue;
-            }
-            String key = key(token);
-            String value = value(token);
-            if (key == null) {
-                sender.sendMessage(Text.error("Unknown filter \"" + token + "\"."));
-                return;
-            }
-            switch (key) {
-                case "u" -> query.actor = value;
-                case "t" -> {
-                    Long since = parseTime(value);
-                    if (since == null) {
-                        sender.sendMessage(Text.error("Time must look like 30s, 15m, 6h or 7d."));
-                        return;
-                    }
-                    query.since = since;
-                }
-                case "r" -> {
-                    Integer radius = parseInt(value);
-                    if (radius == null) {
-                        sender.sendMessage(Text.error("Radius must be a number."));
-                        return;
-                    }
-                    query.radius = radius;
-                }
-                case "a" -> {
-                    Set<ActionType> actions = ActionType.parseList(value);
-                    if (actions.isEmpty()) {
-                        sender.sendMessage(Text.error("Unknown action. Use one of: " + ActionType.ids()));
-                        return;
-                    }
-                    query.actions = actions;
-                }
-                case "b" -> query.blockContains = value.toLowerCase(Locale.ROOT).replace(' ', '_');
-                case "x", "y", "z", "w" -> {
-                    if (!applyPosition(sender, query, key, value)) {
-                        return;
-                    }
-                }
-                default -> {
-                    sender.sendMessage(Text.error("Unknown filter \"" + token + "\"."));
-                    return;
-                }
-            }
+        Query query;
+        try {
+            query = parseFilters(args, 1);
+        } catch (IllegalArgumentException e) {
+            sender.sendMessage(Text.error(e.getMessage()));
+            return;
         }
 
-        if (query.radius != null) {
-            if (!resolveCenter(sender, query)) {
-                return;
-            }
+        if (query.radius != null && !resolveCenter(sender, query)) {
+            return;
         }
 
-        if (!query.hasNarrowFilter() && !global) {
+        if (!query.hasNarrowFilter() && !query.global) {
             sender.sendMessage(Text.error("That would " + verb + " the whole database. Add u:, r:, a: or b:,"
                     + " or write \"global\" if you really mean it."));
             return;
@@ -299,10 +211,12 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
                     List<LedgerEntry> work = new ArrayList<>(entries);
                     sender.sendMessage(Text.info((isRollback ? "Rolling back " : "Restoring ")
                             + work.size() + " changes ..."));
+                    plugin.setLastChange(work, isRollback, sender.getName());
                     new BlockChanger(plugin, work, isRollback, result -> {
                         sender.sendMessage(Text.success((isRollback ? "Rollback" : "Restore") + " finished: "
                                 + result.changed() + " blocks changed, " + result.skipped()
-                                + " already correct or unavailable, in " + result.millis() + " ms."));
+                                + " already correct or unavailable, in " + result.millis() + " ms."
+                                + " Use /" + label + " revert to flip it back."));
                         plugin.getLogger().info(sender.getName() + " ran a " + (isRollback ? "rollback" : "restore")
                                 + " touching " + result.changed() + " blocks.");
                     }).start();
@@ -310,6 +224,218 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
                     reportFailure(sender, error);
                     return null;
                 });
+    }
+
+    /** /blockledger near - recent activity around the player. */
+    private void near(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("blockledger.lookup")) {
+            sender.sendMessage(Text.error("You do not have permission to look up records."));
+            return;
+        }
+        if (!(sender instanceof Player)) {
+            sender.sendMessage(Text.error("Only a player can use near. From the console, use lookup with "
+                    + "x: y: z: and r:."));
+            return;
+        }
+        int radius = 20;
+        String time = "15m";
+        if (args.length > 1) {
+            Integer parsed = parseInt(args[1]);
+            if (parsed == null || parsed < 1) {
+                sender.sendMessage(Text.error("Usage: /blockledger near [radius] [time], e.g. near 30 2h"));
+                return;
+            }
+            radius = parsed;
+        }
+        if (args.length > 2) {
+            time = args[2];
+        }
+        if (parseTime(time) == null) {
+            sender.sendMessage(Text.error("Time must look like 30s, 15m, 6h or 7d."));
+            return;
+        }
+        // Reuse the lookup output: build the same filters the player would have typed.
+        lookup(sender, new String[]{"lookup", "r:" + radius, "t:" + time}, "blockledger");
+    }
+
+    /** /blockledger count - how many records match, without listing them. */
+    private void count(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("blockledger.lookup")) {
+            sender.sendMessage(Text.error("You do not have permission to look up records."));
+            return;
+        }
+        Query query;
+        try {
+            query = parseFilters(args, 1);
+        } catch (IllegalArgumentException e) {
+            sender.sendMessage(Text.error(e.getMessage()));
+            return;
+        }
+        if (query.radius != null && !resolveCenter(sender, query)) {
+            return;
+        }
+        sender.sendMessage(Text.info("Counting ..."));
+        plugin.database().countAsync(query).thenAccept(total ->
+                plugin.getServer().getScheduler().runTask(plugin, () ->
+                        sender.sendMessage(Text.success(Text.number(total) + " records match."))))
+                .exceptionally(error -> {
+                    reportFailure(sender, error);
+                    return null;
+                });
+    }
+
+    /** /blockledger top - the busiest players. */
+    private void top(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("blockledger.lookup")) {
+            sender.sendMessage(Text.error("You do not have permission to look up records."));
+            return;
+        }
+        String time = args.length > 1 ? args[1] : "24h";
+        Long since = parseTime(time);
+        if (since == null) {
+            sender.sendMessage(Text.error("Usage: /blockledger top [time] [limit], e.g. top 7d 10"));
+            return;
+        }
+        int limit = 10;
+        if (args.length > 2) {
+            Integer parsed = parseInt(args[2]);
+            if (parsed == null || parsed < 1) {
+                sender.sendMessage(Text.error("Limit must be a whole number of 1 or more."));
+                return;
+            }
+            limit = Math.min(parsed, 50);
+        }
+        final int shown = limit;
+        sender.sendMessage(Text.info("Counting activity from the last " + time + " ..."));
+        plugin.database().topActorsAsync(since, limit).thenAccept(actors ->
+                plugin.getServer().getScheduler().runTask(plugin, () -> {
+                    if (actors.isEmpty()) {
+                        sender.sendMessage(Text.warn("No activity in that period."));
+                        return;
+                    }
+                    sender.sendMessage(Text.info("Busiest in the last " + time + ":"));
+                    int rank = 1;
+                    for (Database.ActorCount entry : actors) {
+                        sender.sendMessage(Text.plain(rank++ + ". " + entry.actor() + " - "
+                                + Text.number(entry.total()) + " records", NamedTextColor.GRAY));
+                    }
+                    if (actors.size() >= shown) {
+                        sender.sendMessage(Text.info("Showing the top " + shown + "."));
+                    }
+                })).exceptionally(error -> {
+                    reportFailure(sender, error);
+                    return null;
+                });
+    }
+
+    /** /blockledger export - write matching records to a CSV file in the plugin folder. */
+    private void export(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("blockledger.export")) {
+            sender.sendMessage(Text.error("You do not have permission to export records."));
+            return;
+        }
+        if (args.length < 2) {
+            sender.sendMessage(Text.error("Usage: /blockledger export <file> <filters>"));
+            return;
+        }
+        // Keep the name inside the plugin folder, whatever was typed.
+        String name = args[1].replaceAll("[^A-Za-z0-9._-]", "_");
+        if (name.isBlank()) {
+            name = "export";
+        }
+        if (!name.toLowerCase(Locale.ROOT).endsWith(".csv")) {
+            name = name + ".csv";
+        }
+        Query query;
+        try {
+            query = parseFilters(args, 2);
+        } catch (IllegalArgumentException e) {
+            sender.sendMessage(Text.error(e.getMessage()));
+            return;
+        }
+        if (query.radius != null && !resolveCenter(sender, query)) {
+            return;
+        }
+        query.limit = plugin.settings().maxExportResults();
+        java.io.File target = new java.io.File(plugin.getDataFolder(), name);
+        sender.sendMessage(Text.info("Writing " + name + " ..."));
+        plugin.database().exportCsvAsync(query, target).thenAccept(rows ->
+                plugin.getServer().getScheduler().runTask(plugin, () ->
+                        sender.sendMessage(Text.success("Wrote " + Text.number(rows) + " records to "
+                                + target.getName() + " in plugins/BlockLedger/."))))
+                .exceptionally(error -> {
+                    reportFailure(sender, error);
+                    return null;
+                });
+    }
+
+    /** /blockledger tp - teleport to a place, usually one seen in a lookup. */
+    private void teleport(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("blockledger.tp")) {
+            sender.sendMessage(Text.error("You do not have permission to teleport."));
+            return;
+        }
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage(Text.error("Only a player can teleport."));
+            return;
+        }
+        if (args.length < 4) {
+            sender.sendMessage(Text.error("Usage: /blockledger tp <x> <y> <z> [world]"));
+            return;
+        }
+        Integer x = parseInt(args[1]);
+        Integer y = parseInt(args[2]);
+        Integer z = parseInt(args[3]);
+        if (x == null || y == null || z == null) {
+            sender.sendMessage(Text.error("x, y and z must be whole numbers."));
+            return;
+        }
+        World world = args.length > 4 ? Bukkit.getWorld(args[4]) : player.getWorld();
+        if (world == null) {
+            sender.sendMessage(Text.error("Unknown world \"" + args[4] + "\"."));
+            return;
+        }
+        Location target = new Location(world, x + 0.5, y, z + 0.5);
+        player.teleportAsync(target).thenAccept(moved ->
+                plugin.getServer().getScheduler().runTask(plugin, () -> {
+                    if (Boolean.TRUE.equals(moved)) {
+                        player.sendMessage(Text.success("Teleported to " + x + ", " + y + ", " + z
+                                + " in " + world.getName() + "."));
+                    } else {
+                        player.sendMessage(Text.error("The teleport did not happen - something cancelled it."));
+                    }
+                }));
+    }
+
+    /** /blockledger revert - flip the last rollback or restore back. */
+    private void undo(CommandSender sender) {
+        if (!sender.hasPermission("blockledger.rollback")) {
+            sender.sendMessage(Text.error("You do not have permission to change blocks."));
+            return;
+        }
+        if (plugin.isChangingBlocks()) {
+            sender.sendMessage(Text.error("A rollback or restore is already running. Wait for it to finish."));
+            return;
+        }
+        BlockLedgerPlugin.LastChange last = plugin.lastChange();
+        if (last == null || last.entries().isEmpty()) {
+            sender.sendMessage(Text.warn("There is no rollback or restore to undo."));
+            return;
+        }
+        // Undoing a rollback is a restore and the other way round, applied in the opposite order.
+        List<LedgerEntry> entries = new ArrayList<>(last.entries());
+        Collections.reverse(entries);
+        boolean rollback = !last.rollback();
+        String what = last.rollback() ? "rollback" : "restore";
+
+        sender.sendMessage(Text.info("Reverting the last " + what + " (" + entries.size() + " records) ..."));
+        plugin.setLastChange(entries, rollback, sender.getName());
+        new BlockChanger(plugin, entries, rollback, result -> {
+            sender.sendMessage(Text.success("Reverted the last " + what + ": " + result.changed()
+                    + " blocks changed, " + result.skipped() + " already correct or unavailable."));
+            plugin.getLogger().info(sender.getName() + " reverted a " + what + " touching "
+                    + result.changed() + " blocks.");
+        }).start();
     }
 
     private void purge(CommandSender sender, String[] args) {
@@ -378,26 +504,76 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
         return colon < 0 ? "" : token.substring(colon + 1);
     }
 
-    private boolean applyPosition(CommandSender sender, Query query, String key, String value) {
-        if (key.equals("w")) {
-            if (Bukkit.getWorld(value) == null) {
-                sender.sendMessage(Text.error("Unknown world \"" + value + "\"."));
-                return false;
+    /**
+     * Parses the filter arguments from {@code from} onwards.
+     *
+     * @throws IllegalArgumentException with a message fit for the player when something is wrong
+     */
+    private Query parseFilters(String[] args, int from) {
+        Query query = new Query();
+        for (int i = from; i < args.length; i++) {
+            String token = args[i];
+            if (token.equalsIgnoreCase("global")) {
+                query.global = true;
+                continue;
             }
-            query.world = value;
-            return true;
+            String key = key(token);
+            String value = value(token);
+            if (key == null) {
+                throw new IllegalArgumentException("Unknown filter \"" + token + "\".");
+            }
+            switch (key) {
+                case "u" -> query.actor = value;
+                case "t" -> {
+                    Long since = parseTime(value);
+                    if (since == null) {
+                        throw new IllegalArgumentException("Time must look like 30s, 15m, 6h or 7d.");
+                    }
+                    query.since = since;
+                }
+                case "r" -> {
+                    Integer radius = parseInt(value);
+                    if (radius == null || radius < 0) {
+                        throw new IllegalArgumentException("Radius must be a whole number of blocks.");
+                    }
+                    query.radius = radius;
+                }
+                case "a" -> {
+                    Set<ActionType> actions = ActionType.parseList(value);
+                    if (actions.isEmpty()) {
+                        throw new IllegalArgumentException("Unknown action. Use one of: " + ActionType.ids());
+                    }
+                    query.actions = actions;
+                }
+                case "b" -> query.blockContains = value.toLowerCase(Locale.ROOT).replace(' ', '_');
+                case "p" -> {
+                    Integer parsed = parseInt(value);
+                    if (parsed == null || parsed < 1) {
+                        throw new IllegalArgumentException("Page must be a number of 1 or more.");
+                    }
+                    query.page = parsed;
+                }
+                case "x" -> query.x = requireInt(key, value);
+                case "y" -> query.y = requireInt(key, value);
+                case "z" -> query.z = requireInt(key, value);
+                case "w" -> {
+                    if (Bukkit.getWorld(value) == null) {
+                        throw new IllegalArgumentException("Unknown world \"" + value + "\".");
+                    }
+                    query.world = value;
+                }
+                default -> throw new IllegalArgumentException("Unknown filter \"" + token + "\".");
+            }
         }
+        return query;
+    }
+
+    private static int requireInt(String key, String value) {
         Integer parsed = parseInt(value);
         if (parsed == null) {
-            sender.sendMessage(Text.error(key + ": must be a whole number."));
-            return false;
+            throw new IllegalArgumentException(key + ": must be a whole number.");
         }
-        switch (key) {
-            case "x" -> query.x = parsed;
-            case "y" -> query.y = parsed;
-            default -> query.z = parsed;
-        }
-        return true;
+        return parsed;
     }
 
     /** Fills in a missing centre from the player's position. */
@@ -542,21 +718,41 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
     public List<String> onTabComplete(CommandSender sender, Command command,
                                       String alias, String[] args) {
         if (args.length == 1) {
-            return filter(List.of("inspect", "lookup", "rollback", "restore", "purge", "status", "reload", "help"),
-                    args[0]);
+            return filter(List.of("inspect", "near", "lookup", "count", "top", "tp", "export",
+                    "rollback", "restore", "revert", "purge", "status", "reload", "help"), args[0]);
         }
-        if (args.length == 2 && args[0].equalsIgnoreCase("purge")) {
-            return filter(List.of("7", "14", "30", "90"), args[1]);
+        String sub = args[0].toLowerCase(Locale.ROOT);
+        if (args.length == 2) {
+            if (sub.equals("purge")) {
+                return filter(List.of("7", "14", "30", "90"), args[1]);
+            }
+            if (sub.equals("near")) {
+                return filter(List.of("10", "20", "50", "100"), args[1]);
+            }
+            if (sub.equals("top")) {
+                return filter(List.of("1h", "6h", "24h", "7d", "30d"), args[1]);
+            }
+            if (sub.equals("tp") || sub.equals("teleport")) {
+                return Collections.emptyList();
+            }
+            if (sub.equals("export")) {
+                // The second argument is the file name, not a filter.
+                return Collections.emptyList();
+            }
+        }
+        if (args.length == 3 && sub.equals("top")) {
+            return filter(List.of("5", "10", "20", "50"), args[2]);
         }
         if (args.length >= 2) {
-            String sub = args[0].toLowerCase(Locale.ROOT);
-            if (!sub.equals("lookup") && !sub.equals("rollback") && !sub.equals("restore")
-                    && !sub.equals("l") && !sub.equals("rb") && !sub.equals("rs")) {
+            boolean takesFilters = sub.equals("lookup") || sub.equals("l") || sub.equals("count")
+                    || sub.equals("rollback") || sub.equals("rb") || sub.equals("rs")
+                    || sub.equals("restore") || sub.equals("export");
+            if (!takesFilters) {
                 return Collections.emptyList();
             }
             String current = args[args.length - 1];
             List<String> options = new ArrayList<>(List.of("u:", "t:", "r:", "a:", "b:", "p:", "x:", "y:", "z:", "w:"));
-            if (sub.startsWith("r")) {
+            if (sub.equals("rollback") || sub.equals("rb") || sub.equals("restore") || sub.equals("rs")) {
                 options.add("global");
             }
             for (Player player : Bukkit.getOnlinePlayers()) {

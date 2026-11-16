@@ -38,14 +38,17 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0
-          name: BlockLedger 1.0.0
+          tag_name: v1.1.0
+          name: BlockLedger 1.1.0
           body: |
             Block logging with inspect, rollback and restore for Paper 26.3.
 
             - Requires Java 25 and Paper 26.3
-            - Drop `BlockLedger-1.0.0.jar` into `plugins/`
+            - Drop `BlockLedger-1.1.0.jar` into `plugins/`
             - The SQLite driver is downloaded by Paper on first start, so the server needs internet once
+
+            New in 1.1.0: `/inspect`, `/restore` and `/rollback` shortcuts, plus `/bl near`, `/bl count`,
+            `/bl top`, `/bl tp`, `/bl export` and `/bl revert`.
 
             See the README for commands, filters and permissions.
           files: target/BlockLedger-*.jar
