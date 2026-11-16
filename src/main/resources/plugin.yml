@@ -14,6 +14,16 @@ commands:
     description: Inspect, roll back and restore block changes.
     usage: /blockledger help
     aliases: [bl]
+  restore:
+    description: Re-apply recorded changes, like /blockledger restore.
+    usage: /restore <filters>
+    permission: blockledger.rollback
+    permission-message: You do not have permission to restore changes.
+  rollback:
+    description: Undo recorded changes, like /blockledger rollback.
+    usage: /rollback <filters>
+    permission: blockledger.rollback
+    permission-message: You do not have permission to roll back changes.
 
 permissions:
   blockledger.command:

@@ -55,6 +55,10 @@ public final class BlockLedgerPlugin extends JavaPlugin {
         command.setExecutor(executor);
         command.setTabCompleter(executor);
 
+        // Top-level shortcuts: /restore and /rollback, declared in plugin.yml.
+        registerShortcut(executor, "restore");
+        registerShortcut(executor, "rollback");
+
         startTasks();
 
         getLogger().info("BlockLedger " + getPluginMeta().getVersion() + " enabled. Recording to "
@@ -70,6 +74,18 @@ public final class BlockLedgerPlugin extends JavaPlugin {
         }
         inspecting.clear();
         getLogger().info("BlockLedger disabled.");
+    }
+
+    /** Wires a plugin.yml command such as /restore to one /blockledger subcommand. */
+    private void registerShortcut(BlockLedgerCommand delegate, String name) {
+        PluginCommand shortcut = getCommand(name);
+        if (shortcut == null) {
+            getLogger().warning("The /" + name + " command is missing from plugin.yml - it is skipped.");
+            return;
+        }
+        AliasCommand handler = new AliasCommand(delegate, name);
+        shortcut.setExecutor(handler);
+        shortcut.setTabCompleter(handler);
     }
 
     private void startTasks() {

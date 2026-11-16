@@ -44,8 +44,15 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
             help(sender, label);
             return true;
         }
+        return dispatch(sender, args[0], args, label);
+    }
 
-        String sub = args[0].toLowerCase(Locale.ROOT);
+    /**
+     * Runs one subcommand. Also used by the top-level shortcuts (/restore, /rollback), which pass
+     * their own name as {@code rawSub} and the arguments the player typed.
+     */
+    boolean dispatch(CommandSender sender, String rawSub, String[] args, String label) {
+        String sub = rawSub.toLowerCase(Locale.ROOT);
         switch (sub) {
             case "help" -> help(sender, label);
             case "inspect", "i" -> inspect(sender);
@@ -56,7 +63,7 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
             case "status" -> status(sender);
             case "reload" -> reload(sender);
             default -> {
-                sender.sendMessage(Text.error("Unknown subcommand \"" + args[0] + "\"."));
+                sender.sendMessage(Text.error("Unknown subcommand \"" + rawSub + "\"."));
                 help(sender, label);
             }
         }
@@ -80,6 +87,8 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
                 NamedTextColor.DARK_GRAY));
         sender.sendMessage(Text.plain("Rollback and restore need at least one of u:, r:, a:, b: "
                 + "(add \"global\" to run without them).", NamedTextColor.DARK_GRAY));
+        sender.sendMessage(Text.plain("/restore and /rollback work on their own, without the "
+                + label + " prefix.", NamedTextColor.DARK_GRAY));
     }
 
     private void inspect(CommandSender sender) {

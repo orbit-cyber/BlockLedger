@@ -42,6 +42,9 @@ ready jar from the GitHub page without a local JDK.
 | `/blockledger status` | Record count, file size, oldest record, write queue |
 | `/blockledger reload` | Re-read `config.yml` |
 
+`/restore` and `/rollback` also work on their own, without the `blockledger` prefix - same filters,
+same permissions.
+
 ### Filters
 
 | Filter | Meaning |
