@@ -55,7 +55,8 @@ public final class BlockLedgerPlugin extends JavaPlugin {
         command.setExecutor(executor);
         command.setTabCompleter(executor);
 
-        // Top-level shortcuts: /restore and /rollback, declared in plugin.yml.
+        // Top-level shortcuts: /inspect, /restore and /rollback, declared in plugin.yml.
+        registerShortcut(executor, "inspect");
         registerShortcut(executor, "restore");
         registerShortcut(executor, "rollback");
 

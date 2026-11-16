@@ -32,6 +32,10 @@ public final class AliasCommand implements CommandExecutor, TabCompleter {
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        // /inspect takes no arguments, so there is nothing to suggest.
+        if (sub.equals("inspect")) {
+            return List.of();
+        }
         // The delegate completes against args[0] = subcommand, so it gets the sub prepended. With no
         // arguments yet, an empty argument is appended so the filter suggestions still appear.
         int extra = args.length == 0 ? 1 : 0;

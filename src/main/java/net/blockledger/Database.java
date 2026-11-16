@@ -176,11 +176,14 @@ public final class Database {
         }
     }
 
-    /** Runs a query off the main thread. */
+    /** Runs a query off the main thread, after writing anything still queued so it is seen. */
     public CompletableFuture<List<LedgerEntry>> queryAsync(Query query) {
         CompletableFuture<List<LedgerEntry>> future = new CompletableFuture<>();
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
+                // A block broken a moment ago may still be queued; flush first so lookups and
+                // inspect see it straight away instead of after the next scheduled flush.
+                flush();
                 future.complete(query(query));
             } catch (Throwable t) {
                 future.completeExceptionally(t);

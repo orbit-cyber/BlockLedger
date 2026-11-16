@@ -87,7 +87,7 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
                 NamedTextColor.DARK_GRAY));
         sender.sendMessage(Text.plain("Rollback and restore need at least one of u:, r:, a:, b: "
                 + "(add \"global\" to run without them).", NamedTextColor.DARK_GRAY));
-        sender.sendMessage(Text.plain("/restore and /rollback work on their own, without the "
+        sender.sendMessage(Text.plain("/inspect, /restore and /rollback work on their own, without the "
                 + label + " prefix.", NamedTextColor.DARK_GRAY));
     }
 

@@ -34,7 +34,7 @@ ready jar from the GitHub page without a local JDK.
 
 | Command | What it does |
 | --- | --- |
-| `/blockledger inspect` (alias `/bl i`) | Toggle inspect mode: left or right click a block to see who changed it and when |
+| `/blockledger inspect` (alias `/bl i`, or `/inspect`) | Toggle inspect mode: left or right click a block to see who changed it and when |
 | `/blockledger lookup <filters>` | List matching records, 10 per page |
 | `/blockledger rollback <filters>` | Put the matching blocks back to how they were before |
 | `/blockledger restore <filters>` | Re-apply the matching changes |
@@ -42,8 +42,14 @@ ready jar from the GitHub page without a local JDK.
 | `/blockledger status` | Record count, file size, oldest record, write queue |
 | `/blockledger reload` | Re-read `config.yml` |
 
-`/restore` and `/rollback` also work on their own, without the `blockledger` prefix - same filters,
-same permissions.
+`/inspect`, `/restore` and `/rollback` also work on their own, without the `blockledger` prefix - same
+filters, same permissions:
+
+```
+/inspect
+/restore u:Steve t:1h
+/rollback u:Griefer r:50 t:2h
+```
 
 ### Filters
 
