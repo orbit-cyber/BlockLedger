@@ -10,6 +10,9 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
+import org.bukkit.block.Block;
+import org.bukkit.block.BlockState;
+import org.bukkit.block.Container;
 import org.bukkit.entity.Player;
 
 import java.time.Instant;
@@ -58,6 +61,7 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
             case "inspect", "i" -> inspect(sender);
             case "lookup", "l" -> lookup(sender, args, label);
             case "near", "n" -> near(sender, args);
+            case "chest", "container" -> chest(sender, args);
             case "count" -> count(sender, args);
             case "top", "leaderboard" -> top(sender, args);
             case "stats" -> stats(sender, args);
@@ -84,6 +88,8 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(Component.text("BlockLedger", NamedTextColor.AQUA));
         sender.sendMessage(Text.plain("/" + label + " inspect - toggle click-to-inspect", NamedTextColor.GRAY));
         sender.sendMessage(Text.plain("/" + label + " near [radius] [time] - recent activity around you",
+                NamedTextColor.GRAY));
+        sender.sendMessage(Text.plain("/" + label + " chest - who opened the chest you are looking at",
                 NamedTextColor.GRAY));
         sender.sendMessage(Text.plain("/" + label + " lookup <filters> - list recorded changes", NamedTextColor.GRAY));
         sender.sendMessage(Text.plain("/" + label + " count <filters> - how many records match", NamedTextColor.GRAY));
@@ -585,6 +591,94 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
                 });
     }
 
+    /**
+     * /blockledger chest - the chest logger's view of one container: who touched it and what moved.
+     *
+     * <p>With no arguments it uses the container the player is looking at, so a staff member can walk
+     * up to a robbed chest and ask it directly.
+     */
+    private void chest(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("blockledger.lookup")) {
+            sender.sendMessage(Text.error("You do not have permission to look up records."));
+            return;
+        }
+        Query query = new Query();
+        query.actions = Set.of(ActionType.CONTAINER);
+
+        if (args.length >= 4) {
+            Integer x = parseInt(args[1]);
+            Integer y = parseInt(args[2]);
+            Integer z = parseInt(args[3]);
+            if (x == null || y == null || z == null) {
+                sender.sendMessage(Text.error("Usage: /blockledger chest [x y z [world]]"));
+                return;
+            }
+            World world = args.length > 4 ? Bukkit.getWorld(args[4]) : null;
+            if (args.length > 4 && world == null) {
+                sender.sendMessage(Text.error("Unknown world \"" + args[4] + "\"."));
+                return;
+            }
+            if (world == null) {
+                if (!(sender instanceof Player player)) {
+                    sender.sendMessage(Text.error("From the console, add the world: /blockledger chest x y z world"));
+                    return;
+                }
+                world = player.getWorld();
+            }
+            query.world = world.getName();
+            query.x = x;
+            query.y = y;
+            query.z = z;
+        } else if (sender instanceof Player player) {
+            Block target = player.getTargetBlockExact(8);
+            if (target == null) {
+                sender.sendMessage(Text.warn("Look at a chest, barrel, hopper or shulker box first, or give "
+                        + "coordinates: /blockledger chest x y z"));
+                return;
+            }
+            BlockState state = target.getState();
+            if (!(state instanceof Container)) {
+                sender.sendMessage(Text.warn("That is a " + Text.blockName(BlockStates.serialize(target))
+                        + ", not a container."));
+                return;
+            }
+            query.world = target.getWorld().getName();
+            query.x = target.getX();
+            query.y = target.getY();
+            query.z = target.getZ();
+        } else {
+            sender.sendMessage(Text.error("Usage: /blockledger chest x y z [world]"));
+            return;
+        }
+
+        query.limit = plugin.settings().maxLookupResults();
+        query.ascending = false;
+        final String where = query.x + ", " + query.y + ", " + query.z + " in " + query.world;
+
+        sender.sendMessage(Text.info("Reading the history of the container at " + where + " ..."));
+        plugin.database().queryAsync(query).thenAccept(entries ->
+                plugin.getServer().getScheduler().runTask(plugin, () -> {
+                    if (entries.isEmpty()) {
+                        sender.sendMessage(Text.warn("Nobody has opened the container at " + where + "."));
+                        return;
+                    }
+                    sender.sendMessage(Text.info("Container at " + where + " - " + entries.size()
+                            + " records, newest first:"));
+                    boolean anyContents = false;
+                    for (LedgerEntry entry : entries) {
+                        sender.sendMessage(describe(entry));
+                        anyContents = anyContents || entry.contents() != null;
+                    }
+                    if (!anyContents) {
+                        sender.sendMessage(Text.info("Set log.container-contents to true in config.yml to "
+                                + "also store what the chest held after each change."));
+                    }
+                })).exceptionally(error -> {
+                    reportFailure(sender, error);
+                    return null;
+                });
+    }
+
     private void purge(CommandSender sender, String[] args) {
         if (!sender.hasPermission("blockledger.purge")) {
             sender.sendMessage(Text.error("You do not have permission to purge records."));
@@ -819,7 +913,8 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
                     : "poured " + Text.blockName(entry.after()), NamedTextColor.AQUA);
             case NATURAL -> what = Component.text("changed " + Text.blockName(entry.before())
                     + " to " + Text.blockName(entry.after()), NamedTextColor.DARK_AQUA);
-            case CONTAINER -> what = Component.text("used a container", NamedTextColor.LIGHT_PURPLE);
+            case CONTAINER -> what = Component.text(orSomething(entry.extra(), "used a container"),
+                    NamedTextColor.LIGHT_PURPLE);
             case KILL -> what = Component.text("killed " + orSomething(entry.extra(), "a mob"),
                     NamedTextColor.DARK_RED);
             case DROP -> what = Component.text("dropped " + orSomething(entry.extra(), "an item"),
@@ -843,9 +938,6 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
         }
 
         line = line.append(what);
-        if (entry.extra() != null && entry.action() == ActionType.CONTAINER) {
-            line = line.append(Component.text(" (" + entry.extra() + ")", NamedTextColor.DARK_GRAY));
-        }
         line = line.append(Component.text(" at " + entry.x() + ", " + entry.y() + ", " + entry.z()
                 + " in " + entry.world(), NamedTextColor.DARK_GRAY));
         return line;
@@ -869,8 +961,9 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
     public List<String> onTabComplete(CommandSender sender, Command command,
                                       String alias, String[] args) {
         if (args.length == 1) {
-            return filter(List.of("inspect", "near", "lookup", "count", "top", "stats", "preview", "tp",
-                    "export", "rollback", "restore", "revert", "purge", "status", "reload", "help"), args[0]);
+            return filter(List.of("inspect", "near", "chest", "lookup", "count", "top", "stats", "preview",
+                    "tp", "export", "rollback", "restore", "revert", "purge", "status", "reload", "help"),
+                    args[0]);
         }
         String sub = args[0].toLowerCase(Locale.ROOT);
         if (args.length == 2) {

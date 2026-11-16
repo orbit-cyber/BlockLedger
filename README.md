@@ -6,7 +6,7 @@ written to a local SQLite database, and `/blockledger rollback` puts things back
 other things players do: drops, pickups, crafting, eating, fishing, item breaks, sign and book edits,
 entity interactions, placed boats and minecarts, commands, kills and deaths.
 
-**Download:** take `BlockLedger-1.2.0.jar` from the
+**Download:** take `BlockLedger-1.3.0.jar` from the
 [latest release](https://github.com/orbit-cyber/BlockLedger/releases/latest) and drop it in your
 server's `plugins/` folder.
 
@@ -23,7 +23,7 @@ server's `plugins/` folder.
 mvn package
 ```
 
-The jar lands in `target/BlockLedger-1.2.0.jar`. Drop it in `plugins/` and restart.
+The jar lands in `target/BlockLedger-1.3.0.jar`. Drop it in `plugins/` and restart.
 
 GitHub Actions builds it too: every push to `main` runs `.github/workflows/build.yml`, uploads the jar
 as a build artifact and attaches it to the
@@ -36,6 +36,7 @@ from the GitHub page without a local JDK.
 | --- | --- |
 | `/blockledger inspect` (alias `/bl i`, or `/inspect`) | Toggle inspect mode: left or right click a block to see who changed it and when |
 | `/blockledger near [radius] [time]` | Recent activity around you - `near 30 2h` is 30 blocks and two hours |
+| `/blockledger chest` | Who has been in the chest you are looking at, and what moved each time |
 | `/blockledger lookup <filters>` | List matching records, 10 per page |
 | `/blockledger count <filters>` | How many records match, without listing them |
 | `/blockledger top [time] [limit]` | The busiest players, e.g. `top 7d 10` |
@@ -76,6 +77,8 @@ Examples:
 ```
 /bl near
 /bl near 50 2h
+/bl chest
+/bl chest 120 65 -338
 /bl lookup u:Steve t:1h
 /bl count a:break u:Steve t:7d
 /bl top 7d 10
@@ -99,6 +102,29 @@ whole map. If you really mean everything, add `global`:
 /bl rollback global t:5m
 ```
 
+## The chest logger
+
+Container clicks are recorded as what actually moved, not just that a slot was clicked:
+
+```
+2m ago   Steve    took 32 x diamond, put 5 x iron ingot in a chest   at 120, 65, -338 in world
+1h ago   Alex     took 64 x cobblestone in a barrel                  at 118, 64, -340 in world
+```
+
+The click event fires before the change lands, so the logger reads the inventory now and again one
+tick later and compares the two. Shift-clicks, drags and double-clicks that touch many slots all
+collapse into one readable line per item kind. This works out of the box; `log.container-contents`
+only controls whether the chest's whole inventory is stored as well.
+
+`/bl chest` shows it for a container directly: stand in front of a chest (or give `x y z [world]`) and
+
+```
+/bl chest
+```
+
+With `log.container-contents: true` the chest's whole inventory is also stored after each change, so
+`/bl rollback` refills a chest that was broken or emptied - the size cost is why it is off by default.
+
 ## What gets recorded
 
 Every action below is on by default except `natural`, which is the noisy one.
@@ -109,7 +135,7 @@ Every action below is on by default except `natural`, which is the noisy one.
 | `explosion` / `fire` | Every block destroyed, plus what caused it (creeper, TNT, a player with flint and steel) |
 | `piston` | The moved block leaving one position and arriving at another |
 | `bucket` | Water, lava and powder snow being placed or picked up |
-| `container` | Chests, barrels, hoppers, shulkers and furnaces being used, down to the slot and item |
+| `container` | Chests, barrels, hoppers, shulkers and furnaces being used, as the items that moved ("took 32 x diamond") |
 | `kill` / `death` | Mobs a player killed, and every player death with who or what killed them |
 | `drop` / `pickup` | Items dropped and picked up, with the amount |
 | `craft` | Crafting and smithing results |
@@ -206,6 +232,7 @@ class loader never has to match.
 src/main/java/net/blockledger/
   BlockLedgerPlugin.java   plugin entry point, config, tasks
   BlockListeners.java      Bukkit events to ledger entries
+  ContainerItems.java      what a container click moved, from two snapshots
   InspectListener.java     click-to-inspect
   BlockLedgerCommand.java  /blockledger, filters, output, export
   AliasCommand.java        the /inspect, /restore and /rollback shortcuts

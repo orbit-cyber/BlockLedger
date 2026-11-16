@@ -79,11 +79,8 @@ public final class BlockListeners implements Listener {
 
     /** The items in a container block, or null when it is not a container or holds nothing. */
     private static String contentsOf(Block block) {
-        BlockState state = block.getState();
-        if (!(state instanceof Container container)) {
-            return null;
-        }
-        return BlockStates.serializeItems(container.getInventory().getContents());
+        ItemStack[] items = containerItems(block);
+        return items == null ? null : BlockStates.serializeItems(items);
     }
 
     private void logBlock(ActionType action, Block block, String actor, String before, String after) {
@@ -229,6 +226,13 @@ public final class BlockListeners implements Listener {
 
     // ------------------------------------------------------------------ containers
 
+    /**
+     * Chest logger: records what a container click actually moved, not just that one happened.
+     *
+     * <p>The event fires before the click is applied, so the inventory is read now and again one tick
+     * later, and the difference is what the player took or put. That also covers shift-clicks and
+     * drags, which touch many slots at once.
+     */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onInventoryClick(InventoryClickEvent event) {
         if (!plugin.settings().logContainers()) {
@@ -243,24 +247,49 @@ public final class BlockListeners implements Listener {
                 || plugin.ignoresWorld(location.getWorld().getName())) {
             return;
         }
-        ItemStack item = event.getCurrentItem();
-        if (item == null || item.getType().isAir()) {
-            return;
-        }
-        String extra = "%s in slot %d of a %s (%s)".formatted(
-                describeItem(item), event.getSlot(),
-                event.getInventory().getType().name().toLowerCase().replace('_', ' '),
-                event.getClick());
-        LedgerEntry entry = LedgerEntry.event(ActionType.CONTAINER, location.getWorld().getName(),
-                location.getBlockX(), location.getBlockY(), location.getBlockZ(), player.getName(), extra);
-        if (!plugin.settings().logContainerContents()) {
-            plugin.record(entry);
-            return;
-        }
-        // The click is applied after this event, so the new contents are read one tick later.
+        ItemStack clicked = event.getCurrentItem();
+        String kind = event.getInventory().getType().name().toLowerCase(java.util.Locale.ROOT).replace('_', ' ');
         Block container = location.getBlock();
-        plugin.getServer().getScheduler().runTask(plugin, () ->
-                plugin.record(entry.withContents(contentsOf(container))));
+        String world = location.getWorld().getName();
+        int x = location.getBlockX();
+        int y = location.getBlockY();
+        int z = location.getBlockZ();
+        boolean keepContents = plugin.settings().logContainerContents();
+
+        ItemStack[] before = ContainerItems.copy(event.getInventory().getContents());
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            if (!container.getChunk().isLoaded()) {
+                return;
+            }
+            ItemStack[] after = containerItems(container);
+            List<String> moves = after == null
+                    ? List.of()
+                    : ContainerItems.delta(before, after);
+            String extra;
+            if (moves.isEmpty()) {
+                // Nothing could be compared - the block is gone, say - so fall back to the click itself.
+                if (clicked == null || clicked.getType().isAir()) {
+                    return;
+                }
+                extra = "%s in slot %d of a %s (%s)".formatted(
+                        describeItem(clicked), event.getSlot(), kind, event.getClick());
+            } else {
+                extra = String.join(", ", moves) + " in a " + kind;
+            }
+            LedgerEntry entry = LedgerEntry.event(ActionType.CONTAINER, world, x, y, z, player.getName(), extra);
+            plugin.record(keepContents && after != null
+                    ? entry.withContents(BlockStates.serializeItems(after))
+                    : entry);
+        });
+    }
+
+    /** The items inside a container block, or null when the block is no longer a container. */
+    private static ItemStack[] containerItems(Block block) {
+        BlockState state = block.getState();
+        if (!(state instanceof Container container)) {
+            return null;
+        }
+        return ContainerItems.copy(container.getInventory().getContents());
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)

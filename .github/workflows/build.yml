@@ -38,18 +38,18 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.2.0
-          name: BlockLedger 1.2.0
+          tag_name: v1.3.0
+          name: BlockLedger 1.3.0
           body: |
             Block logging with inspect, rollback and restore for Paper 26.3.
 
             - Requires Java 25 and Paper 26.3
-            - Drop `BlockLedger-1.2.0.jar` into `plugins/`
+            - Drop `BlockLedger-1.3.0.jar` into `plugins/`
             - The SQLite driver is downloaded by Paper on first start, so the server needs internet once
 
-            New in 1.2.0: optional chest contents logging so a rollback refills containers, `/bl preview`,
-            `/bl stats`, a `/bl undo` that really undoes, and rollbacks no longer drop other players'
-            actions while they run.
+            New in 1.3.0: a chest logger. Every container click records what actually moved
+            ("took 32 x diamond in a chest") instead of just that a slot was clicked, and `/bl chest`
+            tells you who has been in the container you are looking at.
 
             See the README for commands, filters and permissions.
           files: target/BlockLedger-*.jar

@@ -53,7 +53,6 @@ public final class Settings {
         this.logDeaths = config.getBoolean("log.deaths", true);
         this.logCommands = config.getBoolean("log.commands", true);
         this.logContainerContents = config.getBoolean("log.container-contents", false);
-
         Set<String> worlds = new HashSet<>();
         List<String> worldList = config.getStringList("ignore.worlds");
         for (String world : worldList) {
