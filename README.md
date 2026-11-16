@@ -106,6 +106,9 @@ Every action below is on by default except `natural`, which is the noisy one.
 - **Writes are cheap.** Events only add to an in-memory queue; the database is written asynchronously
   every `storage.flush-interval-ticks` ticks (one second by default). A busy server never waits on
   the disk.
+- **Nothing is missed by a lookup.** A query writes anything still queued before it reads, so a block
+  broken a moment ago shows up in `/inspect` and `/bl lookup` straight away. On shutdown the queue is
+  written out before the database closes.
 - **Rollbacks are gentle.** Blocks are changed `limits.blocks-per-tick` at a time (200 by default)
   instead of all at once, and a rollback's own writes are not recorded again.
 - **Blocks keep their exact state.** Stairs, slabs, signs and water levels are stored as full block
