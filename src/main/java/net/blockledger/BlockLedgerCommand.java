@@ -478,8 +478,25 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
             case NATURAL -> what = Component.text("changed " + Text.blockName(entry.before())
                     + " to " + Text.blockName(entry.after()), NamedTextColor.DARK_AQUA);
             case CONTAINER -> what = Component.text("used a container", NamedTextColor.LIGHT_PURPLE);
-            case KILL -> what = Component.text("killed " + (entry.extra() == null ? "a mob" : entry.extra()),
+            case KILL -> what = Component.text("killed " + orSomething(entry.extra(), "a mob"),
                     NamedTextColor.DARK_RED);
+            case DROP -> what = Component.text("dropped " + orSomething(entry.extra(), "an item"),
+                    NamedTextColor.YELLOW);
+            case PICKUP -> what = Component.text("picked up " + orSomething(entry.extra(), "an item"),
+                    NamedTextColor.GREEN);
+            case CRAFT -> what = Component.text("crafted " + orSomething(entry.extra(), "an item"),
+                    NamedTextColor.AQUA);
+            case CONSUME -> what = Component.text("consumed " + orSomething(entry.extra(), "an item"),
+                    NamedTextColor.AQUA);
+            case USE -> what = Component.text(orSomething(entry.extra(), "used something"),
+                    NamedTextColor.LIGHT_PURPLE);
+            case SIGN -> what = Component.text("edited " + orSomething(entry.extra(), "a sign"),
+                    NamedTextColor.BLUE);
+            case ENTITY -> what = Component.text("placed " + orSomething(entry.extra(), "an entity"),
+                    NamedTextColor.LIGHT_PURPLE);
+            case COMMAND -> what = Component.text("ran " + orSomething(entry.extra(), "a command"),
+                    NamedTextColor.WHITE);
+            case DEATH -> what = Component.text(orSomething(entry.extra(), "died"), NamedTextColor.DARK_RED);
             default -> what = Component.text("changed something", NamedTextColor.GRAY);
         }
 
@@ -490,6 +507,10 @@ public final class BlockLedgerCommand implements CommandExecutor, TabCompleter {
         line = line.append(Component.text(" at " + entry.x() + ", " + entry.y() + ", " + entry.z()
                 + " in " + entry.world(), NamedTextColor.DARK_GRAY));
         return line;
+    }
+
+    private static String orSomething(String text, String fallback) {
+        return text == null || text.isBlank() ? fallback : text;
     }
 
     // ------------------------------------------------------------------ tab completion

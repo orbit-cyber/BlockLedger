@@ -15,6 +15,14 @@ log:
   buckets: true
   containers: true
   entities: true
+  # Items a player drops, picks up, crafts, eats, drinks or breaks, and what they fish up.
+  items: true
+  # Sign and book edits, entity right-clicks, armor stand changes, boats/minecarts being placed.
+  interactions: true
+  # Player deaths, including who or what killed them.
+  deaths: true
+  # Every command a player runs. Can be noisy on a busy server; off if you prefer.
+  commands: true
   # Fade, form, spread and leaves decaying. Very noisy, off by default.
   natural-changes: false
 

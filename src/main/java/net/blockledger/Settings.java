@@ -22,6 +22,10 @@ public final class Settings {
     private final boolean logContainers;
     private final boolean logEntities;
     private final boolean logNatural;
+    private final boolean logItems;
+    private final boolean logInteractions;
+    private final boolean logDeaths;
+    private final boolean logCommands;
     private final Set<String> ignoredWorlds;
     private final Set<String> ignoredBlocks;
     private final boolean purgeEnabled;
@@ -42,6 +46,10 @@ public final class Settings {
         this.logContainers = config.getBoolean("log.containers", true);
         this.logEntities = config.getBoolean("log.entities", true);
         this.logNatural = config.getBoolean("log.natural-changes", false);
+        this.logItems = config.getBoolean("log.items", true);
+        this.logInteractions = config.getBoolean("log.interactions", true);
+        this.logDeaths = config.getBoolean("log.deaths", true);
+        this.logCommands = config.getBoolean("log.commands", true);
 
         Set<String> worlds = new HashSet<>();
         List<String> worldList = config.getStringList("ignore.worlds");
@@ -114,6 +122,22 @@ public final class Settings {
 
     public boolean logNatural() {
         return logNatural;
+    }
+
+    public boolean logItems() {
+        return logItems;
+    }
+
+    public boolean logInteractions() {
+        return logInteractions;
+    }
+
+    public boolean logDeaths() {
+        return logDeaths;
+    }
+
+    public boolean logCommands() {
+        return logCommands;
     }
 
     public boolean isIgnoredWorld(String worldName) {

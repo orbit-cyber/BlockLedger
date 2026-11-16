@@ -10,13 +10,22 @@ import java.util.Set;
 public enum ActionType {
     BREAK("break", "broke"),
     PLACE("place", "placed"),
-    EXPLOSION("explosion", "was blown up by"),
+    EXPLOSION("explosion", "was blown up"),
     FIRE("fire", "burned"),
     PISTON("piston", "was moved by a piston"),
     BUCKET("bucket", "used a bucket"),
     NATURAL("natural", "changed naturally"),
     CONTAINER("container", "used a container"),
-    KILL("kill", "killed");
+    KILL("kill", "killed"),
+    DROP("drop", "dropped"),
+    PICKUP("pickup", "picked up"),
+    CRAFT("craft", "crafted"),
+    CONSUME("consume", "consumed"),
+    USE("use", "used"),
+    SIGN("sign", "edited a sign"),
+    ENTITY("entity", "placed"),
+    COMMAND("command", "ran"),
+    DEATH("death", "died");
 
     private final String id;
     private final String verb;

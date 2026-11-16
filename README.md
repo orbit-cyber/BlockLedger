@@ -2,7 +2,9 @@
 
 Block logging with inspect, rollback and restore for Paper 26.3 - a lightweight CoreProtect
 alternative. Every block break, place, explosion, fire, piston move, bucket use and container click is
-written to a local SQLite database, and `/blockledger rollback` puts things back.
+written to a local SQLite database, and `/blockledger rollback` puts things back. It also records the
+other things players do: drops, pickups, crafting, eating, fishing, item breaks, sign and book edits,
+entity interactions, placed boats and minecarts, commands, kills and deaths.
 
 **Download:** take `BlockLedger-1.0.0.jar` from the
 [latest release](https://github.com/orbit-cyber/BlockLedger/releases/latest) and drop it in your
@@ -47,7 +49,7 @@ ready jar from the GitHub page without a local JDK.
 | `u:<player>` | Only changes made by this player (or mob, for explosions) |
 | `t:<time>` | Only changes newer than this: `30s`, `15m`, `6h`, `7d`, `2w` |
 | `r:<radius>` | Only changes within this many blocks of you, or of `x:` `y:` `z:` |
-| `a:<action>` | Only this action: `break`, `place`, `explosion`, `fire`, `piston`, `bucket`, `natural`, `container`, `kill` |
+| `a:<action>` | Only this action: `break`, `place`, `explosion`, `fire`, `piston`, `bucket`, `natural`, `container`, `kill`, `drop`, `pickup`, `craft`, `consume`, `use`, `sign`, `entity`, `command`, `death` |
 | `b:<block>` | Only changes involving a block whose name contains this |
 | `p:<page>` | Page number for `lookup` |
 | `x:` `y:` `z:` `w:` | Exact coordinates, and world |
@@ -68,6 +70,27 @@ whole map. If you really mean everything, add `global`:
 ```
 /bl rollback global t:5m
 ```
+
+## What gets recorded
+
+Every action below is on by default except `natural`, which is the noisy one.
+
+| Action | What is stored |
+| --- | --- |
+| `break` / `place` | The full block state before and after, so rollback restores stairs, slabs and water levels exactly |
+| `explosion` / `fire` | Every block destroyed, plus what caused it (creeper, TNT, a player with flint and steel) |
+| `piston` | The moved block leaving one position and arriving at another |
+| `bucket` | Water, lava and powder snow being placed or picked up |
+| `container` | Chests, barrels, hoppers, shulkers and furnaces being used, down to the slot and item |
+| `kill` / `death` | Mobs a player killed, and every player death with who or what killed them |
+| `drop` / `pickup` | Items dropped and picked up, with the amount |
+| `craft` | Crafting and smithing results |
+| `consume` | Food, potions and milk being eaten or drunk |
+| `use` | Fishing catches, items breaking, right-clicking entities and armor stands |
+| `sign` | Sign text written or erased, and books written or titled |
+| `entity` | Boats, minecarts, armor stands and end crystals placed |
+| `command` | Every command a player runs, as typed |
+| `natural` | Liquid flow, block spread, leaves decaying, entities changing blocks (off by default) |
 
 ## How it behaves
 
@@ -100,6 +123,9 @@ whole map. If you really mean everything, add `global`:
 See `config.yml` in `plugins/BlockLedger/`. The interesting knobs:
 
 - `log.natural-changes` - liquid flow, leaves decaying, block spreading. Very noisy; off by default.
+- `log.commands` - every command typed. Useful for moderation, noisy on a big server.
+- `log.items`, `log.interactions`, `log.deaths` - drops, pickups, crafting, sign edits, entity clicks,
+  deaths. All on by default.
 - `ignore.worlds` / `ignore.blocks` - skip a creative world or a block type entirely.
 - `limits.max-rollback-results` - the hard cap on one rollback (20,000 by default).
 
@@ -110,6 +136,7 @@ See `config.yml` in `plugins/BlockLedger/`. The interesting knobs:
 - Pistons are recorded as the moved block leaving one position and arriving at another.
 - `natural` logging covers block spread, liquid flow, leaves and entities changing blocks. Fire
   spread and growth of every plant are not all covered.
+- Commands are stored as the player typed them, including anything they typed as arguments.
 
 ## Layout
 
