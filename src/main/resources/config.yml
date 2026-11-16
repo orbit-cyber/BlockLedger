@@ -1,0 +1,38 @@
+# BlockLedger - block logging with rollback
+
+storage:
+  # SQLite database file, created inside plugins/BlockLedger/
+  file: blockledger.db
+  # How often queued entries are written to the database, in ticks (20 ticks = 1 second)
+  flush-interval-ticks: 20
+
+log:
+  block-break: true
+  block-place: true
+  explosions: true
+  fire: true
+  pistons: true
+  buckets: true
+  containers: true
+  entities: true
+  # Fade, form, spread and leaves decaying. Very noisy, off by default.
+  natural-changes: false
+
+ignore:
+  # World names whose changes are never recorded, e.g. [creative, resource_world]
+  worlds: []
+  # Block types that are never recorded, e.g. [BEDROCK, FARMLAND, FIRE]
+  blocks: []
+
+purge:
+  # Delete records older than the configured age automatically
+  enabled: true
+  days: 30
+
+limits:
+  # Most entries returned by /bl lookup
+  max-lookup-results: 100
+  # Most entries a single /bl rollback or /bl restore may touch
+  max-rollback-results: 20000
+  # Blocks changed per server tick while rolling back (lower = gentler on the server)
+  blocks-per-tick: 200

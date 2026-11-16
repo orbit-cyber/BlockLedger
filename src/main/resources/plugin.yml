@@ -1,0 +1,42 @@
+name: BlockLedger
+version: 1.0.0
+main: net.blockledger.BlockLedgerPlugin
+description: Block logging with inspect, rollback and restore - a lightweight CoreProtect alternative.
+author: BlockLedger
+api-version: '26.3'
+
+# The SQLite driver is downloaded from Maven Central by Paper on first start.
+libraries:
+  - org.xerial:sqlite-jdbc:3.49.1.0
+
+commands:
+  blockledger:
+    description: Inspect, roll back and restore block changes.
+    usage: /blockledger help
+    aliases: [bl]
+
+permissions:
+  blockledger.command:
+    description: Use the /blockledger command
+    default: op
+  blockledger.inspect:
+    description: Toggle click-to-inspect mode
+    default: op
+  blockledger.lookup:
+    description: Look up recorded activity
+    default: op
+  blockledger.rollback:
+    description: Roll back and restore changes
+    default: op
+  blockledger.purge:
+    description: Delete old records
+    default: op
+  blockledger.status:
+    description: Show database statistics
+    default: op
+  blockledger.reload:
+    description: Reload config.yml
+    default: op
+  blockledger.bypass:
+    description: Changes made by players with this permission are not logged
+    default: false

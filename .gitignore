@@ -1,0 +1,7 @@
+target/
+build/
+.idea/
+*.iml
+*.db
+*.db-wal
+*.db-shm
